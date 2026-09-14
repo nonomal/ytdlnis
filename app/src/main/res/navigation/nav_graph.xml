@@ -89,7 +89,7 @@
         tools:layout="@layout/fragment_terminal" />
     <fragment
         android:id="@+id/cookiesFragment"
-        android:name="com.deniscerri.ytdl.ui.more.CookiesFragment"
+        android:name="com.deniscerri.ytdl.ui.more.cookies.CookiesFragment"
         tools:layout="@layout/fragment_cookies"
         android:label="CookiesFragment" />
     <fragment
@@ -125,19 +125,19 @@
     <navigation android:id="@+id/settingsNav">
         <fragment
             android:id="@+id/folderSettingsFragment"
-            android:name="com.deniscerri.ytdl.ui.more.settings.FolderSettingsFragment"
+            android:name="com.deniscerri.ytdl.ui.more.settings.folder.FolderSettingsFragment"
             android:label="FolderSettingsFragment" />
         <fragment
             android:id="@+id/processingSettingsFragment"
-            android:name="com.deniscerri.ytdl.ui.more.settings.ProcessingSettingsFragment"
+            android:name="com.deniscerri.ytdl.ui.more.settings.processing.ProcessingSettingsFragment"
             android:label="ProcessingSettingsFragment" />
         <fragment
             android:id="@+id/downloadSettingsFragment"
-            android:name="com.deniscerri.ytdl.ui.more.settings.DownloadSettingsFragment"
+            android:name="com.deniscerri.ytdl.ui.more.settings.downloading.DownloadSettingsFragment"
             android:label="DownloadSettingsFragment" />
         <fragment
             android:id="@+id/updateSettingsFragment"
-            android:name="com.deniscerri.ytdl.ui.more.settings.UpdateSettingsFragment"
+            android:name="com.deniscerri.ytdl.ui.more.settings.updating.UpdateSettingsFragment"
             android:label="UpdateSettingsFragment" />
         <fragment
             android:id="@+id/mainSettingsFragment"
@@ -161,7 +161,7 @@
         </fragment>
         <fragment
             android:id="@+id/appearanceSettingsFragment"
-            android:name="com.deniscerri.ytdl.ui.more.settings.GeneralSettingsFragment"
+            android:name="com.deniscerri.ytdl.ui.more.settings.general.GeneralSettingsFragment"
             android:label="AppearanceSettingsFragment" />
     </navigation>
     <dialog

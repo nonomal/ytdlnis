@@ -11,9 +11,15 @@ data class VideoPreferences (
     var sponsorBlockFilters: ArrayList<String> = arrayListOf(),
     var writeSubs: Boolean = false,
     var writeAutoSubs: Boolean = false,
-    var subsLanguages: String = "en.*,.*-orig",
+    var burnSubs: Boolean = false,
+    var subsLanguages: String = ".*-orig",
     var audioFormatIDs : ArrayList<String> = arrayListOf(),
     var removeAudio: Boolean = false,
     var alsoDownloadAsAudio: Boolean = false,
-    var recodeVideo: Boolean = false
+    var recodeVideo: Boolean = false,
+    var liveFromStart: Boolean = false,
+    var waitForVideoMinutes: Int = 0,
+    var compatibilityMode: Boolean = false,
+    var embedThumbnail: Boolean = false,
+    var cropValues: String = ""
 ) : Parcelable

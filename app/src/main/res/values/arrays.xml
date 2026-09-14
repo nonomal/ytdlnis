@@ -8,6 +8,7 @@
         <item>flac</item>
         <item>opus</item>
         <item>wav</item>
+        <item>vorbis</item>
     </string-array>
 
     <string-array name="audio_containers_values">
@@ -19,6 +20,7 @@
         <item>flac</item>
         <item>opus</item>
         <item>wav</item>
+        <item>vorbis</item>
     </string-array>
 
     <string-array name="video_containers">
@@ -29,6 +31,7 @@
         <item>mov</item>
         <item>avi</item>
         <item>flv</item>
+        <item>gif</item>
     </string-array>
 
     <string-array name="video_containers_values">
@@ -39,6 +42,7 @@
         <item>mov</item>
         <item>avi</item>
         <item>flv</item>
+        <item>gif</item>
     </string-array>
 
     <string-array name="video_formats">
@@ -108,6 +112,7 @@
         <item>@string/sponsorblock_previews</item>
         <item>@string/sponsorblock_fillers</item>
         <item>@string/sponsorblock_reminders</item>
+        <item>@string/sponsorblock_hook</item>
     </string-array>
 
     <string-array name="sponsorblock_settings_values">
@@ -119,6 +124,7 @@
         <item>preview</item>
         <item>filler</item>
         <item>interaction</item>
+        <item>hook</item>
     </string-array>
 
     <string-array name="sponsorblock_settings_default">
@@ -127,9 +133,11 @@
 
 
     <string-array name="language_entries">
+        <item>@string/system</item>
         <item>English</item>
         <item>العربية</item>
         <item>Azərbaycanca</item>
+        <item>Asamiya</item>
         <item>বাংলা</item>
         <item>বাংলা (India)</item>
         <item>български</item>
@@ -139,6 +147,7 @@
         <item>Español</item>
         <item>فارسی</item>
         <item>Français</item>
+        <item>Hausa</item>
         <item>हिन्दी</item>
         <item>Hrvatski</item>
         <item>Magyar</item>
@@ -149,6 +158,7 @@
         <item>조선말</item>
         <item>latviešu</item>
         <item>بهاس ملايو</item>
+        <item>Mara Reih</item>
         <item>Norsk Bokmål</item>
         <item>Norsk Nynorsk</item>
         <item>पंजाबी</item>
@@ -171,9 +181,11 @@
     </string-array>
 
     <string-array name="language_values">
+        <item>system</item>
         <item>en</item>
         <item>ar</item>
         <item>az</item>
+        <item>as</item>
         <item>bn</item>
         <item>bn-IN</item>
         <item>bg</item>
@@ -183,6 +195,7 @@
         <item>es</item>
         <item>fa</item>
         <item>fr</item>
+        <item>ha</item>
         <item>hi</item>
         <item>hr</item>
         <item>hu</item>
@@ -193,6 +206,7 @@
         <item>ko</item>
         <item>lv</item>
         <item>ms</item>
+        <item>mrh</item>
         <item>nb</item>
         <item>nn</item>
         <item>pa</item>
@@ -240,7 +254,7 @@
     </array>
 
     <array name="formats_source_values">
-        <item>piped</item>
+        <item>newpipe</item>
         <item>yt-dlp</item>
     </array>
 
@@ -249,12 +263,12 @@
         <item>YouTube Music</item>
         <item>Soundcloud</item>
         <item>Bilibili</item>
-        <item>Nico video</item>
+<!--        <item>Nico video</item>-->
         <item>PRX Series</item>
         <item>PRX Stories</item>
         <item>Rokfin</item>
-        <item>Yahoo screen</item>
-        <item>Google Video</item>
+<!--        <item>Yahoo screen</item>-->
+<!--        <item>Google Video</item>-->
         <item>Netverse</item>
     </array>
 
@@ -263,12 +277,12 @@
         <item>ytsearchmusic</item>
         <item>scsearch</item>
         <item>bilisearch</item>
-        <item>nicosearch</item>
+<!--        <item>nicosearch</item>-->
         <item>prxseries</item>
         <item>prxstories</item>
         <item>rkfnsearch</item>
-        <item>yvsearch</item>
-        <item>gvsearch</item>
+<!--        <item>yvsearch</item>-->
+<!--        <item>gvsearch</item>-->
         <item>netsearch</item>
     </array>
 
@@ -909,6 +923,7 @@
     <string-array name="filename_templates">
         <item>%(uploader)s___(string): Full name of the video uploader)</item>
         <item>%(title)s___(string): Video title)</item>
+        <item>%(rownumber)s___(numeric): Row number of item, when downloading multiple items at once)</item>
         <item>%(id)s___(string): Video identifier)</item>
         <item>%(playlist_index,playlist_autonumber&amp;{}. |)s%(title)s___(string): Title with playlist index in front if its available</item>
         <item>%(fulltitle)s___(string): Video title ignoring live timestamp and generic title)</item>
@@ -1014,96 +1029,96 @@
     </string-array>
 
     <string-array name="subtitle_langs">
-        <item>all</item>,
-        <item>live_chat</item>,
-        <item>af</item>,
-        <item>az</item>,
-        <item>id</item>,
-        <item>ms</item>,
-        <item>bs</item>,
-        <item>ca</item>,
-        <item>cs</item>,
-        <item>da</item>,
-        <item>de</item>,
-        <item>et</item>,
-        <item>en-IN</item>,
-        <item>en-GB</item>,
-        <item>en</item>,
-        <item>en.*</item>,
-        <item>es</item>,
-        <item>es-419</item>,
-        <item>es-US</item>,
-        <item>es.*</item>,
-        <item>eu</item>,
-        <item>fil</item>,
-        <item>fr</item>,
-        <item>fr-CA</item>,
-        <item>fr.*</item>,
-        <item>gl</item>,
-        <item>hr</item>,
-        <item>zu</item>,
-        <item>is</item>,
-        <item>it</item>,
-        <item>sw</item>,
-        <item>lv</item>,
-        <item>lt</item>,
-        <item>hu</item>,
-        <item>nl</item>,
-        <item>no</item>,
-        <item>uz</item>,
-        <item>pl</item>,
-        <item>pt-PT</item>,
-        <item>pt</item>,
-        <item>pt.*</item>,
-        <item>ro</item>,
-        <item>sq</item>,
-        <item>sk</item>,
-        <item>sl</item>,
-        <item>sr-Latn</item>,
-        <item>fi</item>,
-        <item>sv</item>,
-        <item>vi</item>,
-        <item>tr</item>,
-        <item>be</item>,
-        <item>bg</item>,
-        <item>ky</item>,
-        <item>kk</item>,
-        <item>mk</item>,
-        <item>mn</item>,
-        <item>ru</item>,
-        <item>sr</item>,
-        <item>uk</item>,
-        <item>el</item>,
-        <item>hy</item>,
-        <item>iw</item>,
-        <item>ur</item>,
-        <item>ar</item>,
-        <item>fa</item>,
-        <item>ne</item>,
-        <item>mr</item>,
-        <item>hi</item>,
-        <item>as</item>,
-        <item>bn</item>,
-        <item>pa</item>,
-        <item>gu</item>,
-        <item>or</item>,
-        <item>ta</item>,
-        <item>te</item>,
-        <item>kn</item>,
-        <item>ml</item>,
-        <item>si</item>,
-        <item>th</item>,
-        <item>lo</item>,
-        <item>my</item>,
-        <item>ka</item>,
-        <item>am</item>,
-        <item>km</item>,
-        <item>zh-CN</item>,
-        <item>zh-TW</item>,
-        <item>zh-HK</item>,
-        <item>zh.*</item>,
-        <item>ja</item>,
+        <item>af</item>
+        <item>am</item>
+        <item>ar</item>
+        <item>as</item>
+        <item>az</item>
+        <item>be</item>
+        <item>bg</item>
+        <item>bn</item>
+        <item>bs</item>
+        <item>ca</item>
+        <item>cs</item>
+        <item>da</item>
+        <item>de</item>
+        <item>el</item>
+        <item>en</item>
+        <item>en-GB</item>
+        <item>en-IN</item>
+        <item>en.*</item>
+        <item>es</item>
+        <item>es-419</item>
+        <item>es-US</item>
+        <item>es.*</item>
+        <item>et</item>
+        <item>eu</item>
+        <item>fa</item>
+        <item>fi</item>
+        <item>fil</item>
+        <item>fr</item>
+        <item>fr-CA</item>
+        <item>fr.*</item>
+        <item>gl</item>
+        <item>gu</item>
+        <item>hi</item>
+        <item>hr</item>
+        <item>hu</item>
+        <item>hy</item>
+        <item>id</item>
+        <item>is</item>
+        <item>it</item>
+        <item>iw</item>
+        <item>ja</item>
+        <item>ka</item>
+        <item>kk</item>
+        <item>km</item>
+        <item>kn</item>
         <item>ko</item>
+        <item>ky</item>
+        <item>lo</item>
+        <item>lt</item>
+        <item>lv</item>
+        <item>ml</item>
+        <item>mk</item>
+        <item>mn</item>
+        <item>mr</item>
+        <item>ms</item>
+        <item>my</item>
+        <item>ne</item>
+        <item>nl</item>
+        <item>no</item>
+        <item>or</item>
+        <item>pa</item>
+        <item>pl</item>
+        <item>pt</item>
+        <item>pt-PT</item>
+        <item>pt.*</item>
+        <item>ro</item>
+        <item>ru</item>
+        <item>si</item>
+        <item>sk</item>
+        <item>sl</item>
+        <item>sq</item>
+        <item>sr</item>
+        <item>sr-Latn</item>
+        <item>sv</item>
+        <item>sw</item>
+        <item>ta</item>
+        <item>te</item>
+        <item>th</item>
+        <item>tr</item>
+        <item>uk</item>
+        <item>ur</item>
+        <item>uz</item>
+        <item>vi</item>
+        <item>zh-CN</item>
+        <item>zh-HK</item>
+        <item>zh-TW</item>
+        <item>zh.*</item>
+        <item>zu</item>
+        <item>all</item>
+        <item>live_chat</item>
     </string-array>
 
     <array name="swipe_gestures">
@@ -1143,6 +1158,27 @@
         <item>master</item>
     </array>
 
+    <array name="video_recommendations">
+        <item>@string/disabled</item>
+        <item>NewPipe</item>
+        <item>YouTube API</item>
+        <item>@string/ytdlp_watch_later</item>
+        <item>@string/ytdlp_recommnedations</item>
+        <item>@string/ytdlp_liked</item>
+        <item>@string/ytdlp_watch_history</item>
+        <item>@string/custom</item>
+    </array>
+    
+    <array name="video_recommnedations_values">
+        <item></item>
+        <item>newpipe</item>
+        <item>yt_api</item>
+        <item>yt_dlp_watch_later</item>
+        <item>yt_dlp_recommendations</item>
+        <item>yt_dlp_liked</item>
+        <item>yt_dlp_watch_history</item>
+        <item>custom</item>
+    </array>
 
     <!--below is for preferred audio language, not related to app's language-->
     <string-array name="language_codes">
@@ -1443,6 +1479,7 @@
         <item>@string/language</item>
         <item>@string/codec</item>
         <item>@string/container</item>
+        <item>@string/file_size</item>
     </string-array>
 
     <string-array name="format_importance_audio_values">
@@ -1450,6 +1487,7 @@
         <item>language</item>
         <item>codec</item>
         <item>container</item>
+        <item>file_size</item>
     </string-array>
 
     <string-array name="format_importance_video">
@@ -1458,6 +1496,7 @@
         <item>@string/codec</item>
         <item>@string/no_audio</item>
         <item>@string/container</item>
+        <item>@string/file_size</item>
     </string-array>
 
     <string-array name="format_importance_video_values">
@@ -1466,6 +1505,7 @@
         <item>codec</item>
         <item>no_audio</item>
         <item>container</item>
+        <item>file_size</item>
     </string-array>
 
     <string-array name="label_visibility">
@@ -1492,6 +1532,97 @@
         <item>daily</item>
         <item>weekly</item>
         <item>monthly</item>
+    </string-array>
+
+    <string-array name="data_fetching_extractor_youtube">
+        <item>yt-dlp</item>
+        <item>NewPipe</item>
+    </string-array>
+
+    <string-array name="data_fetching_extractor_youtube_values">
+        <item>YT_DLP</item>
+        <item>NEWPIPE</item>
+    </string-array>
+
+    <string-array name="youtube_player_clients">
+        <item>android</item>
+        <item>android_vr</item>
+        <item>ios</item>
+        <item>mweb</item>
+        <item>tv</item>
+        <item>tv_downgraded</item>
+        <item>tv_simply</item>
+        <item>visionos</item>
+        <item>web</item>
+        <item>web_creator</item>
+        <item>web_embedded</item>
+        <item>web_music</item>
+        <item>web_safari</item>
+        <item>all</item>
+        <item>default</item>
+    </string-array>
+
+    <string-array name="web_player_clients">
+        <item>web</item>
+        <item>mweb</item>
+        <item>web_safari</item>
+        <item>web_embedded</item>
+        <item>web_creator</item>
+        <item>web_music</item>
+    </string-array>
+
+    <string-array name="audio_bitrate">
+        <item>@string/defaultValue</item>
+        <item>968 kbps</item>
+        <item>320 kbps</item>
+        <item>192 kbps</item>
+        <item>128 kbps</item>
+        <item>64 kbps</item>
+    </string-array>
+
+    <string-array name="audio_bitrate_values">
+        <item></item>
+        <item>968k</item>
+        <item>320k</item>
+        <item>192k</item>
+        <item>128k</item>
+        <item>64k</item>
+    </string-array>
+
+    <string-array name="preferred_format_size">
+        <item>@string/defaultValue</item>
+        <item>@string/smallest</item>
+        <item>@string/largest</item>
+    </string-array>
+
+    <string-array name="preferred_format_size_values">
+        <item></item>
+        <item>smallest</item>
+        <item>largest</item>
+    </string-array>
+
+    <string-array name="save_subdirectory">
+        <item>@string/website</item>
+        <item>@string/playlist</item>
+        <item>@string/media_type</item>
+    </string-array>
+
+    <string-array name="save_subdirectory_values">
+        <item>website</item>
+        <item>playlist</item>
+        <item>media_type</item>
+    </string-array>
+
+    <string-array name="apk_install_methods">
+        <item>@string/system</item>
+        <item>Shizuku</item>
+        <item>@string/external</item>
+    </string-array>
+
+    <string-array name="apk_install_methods_values">
+        <item>system</item>
+        <item>shizuku</item>
+        <item>external</item>
     </string-array>
 
 </resources>

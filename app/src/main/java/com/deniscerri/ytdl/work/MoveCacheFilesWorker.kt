@@ -3,6 +3,7 @@ package com.deniscerri.ytdl.work
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
 import android.os.Build
 import android.os.Environment
 import android.os.Handler
@@ -29,22 +30,29 @@ class MoveCacheFilesWorker(
         val notificationUtil = NotificationUtil(App.instance)
         val id = System.currentTimeMillis().toInt()
 
-        val cachePath = FileUtil.getCachePath(context)
+        val cachePath = FileUtil.getCacheDownloadsPath(context)
         val downloadFolders = File(cachePath)
         val allContent = downloadFolders.walk()
-        allContent.drop(1)
+
         val totalFiles = allContent.count()
-        val destination = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).absolutePath + File.separator + "YTDLnis/CACHE_IMPORT")
+        val destination = File(FileUtil.getDefaultApplicationPath(), "CACHE_IMPORT")
+        destination.mkdirs()
 
         val intent = Intent(context, MainActivity::class.java)
         val pendingIntent = PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_IMMUTABLE)
         val notification = notificationUtil.createMoveCacheFilesNotification(pendingIntent, NotificationUtil.DOWNLOAD_MISC_CHANNEL_ID)
-        val foregroundInfo = ForegroundInfo(id, notification)
-        setForegroundAsync(foregroundInfo)
+
+        if (Build.VERSION.SDK_INT >= 33) {
+            setForegroundAsync(ForegroundInfo(id, notification, FOREGROUND_SERVICE_TYPE_DATA_SYNC))
+        }else{
+            setForegroundAsync(ForegroundInfo(id, notification))
+        }
 
         var progress = 0
         allContent.forEach {
             progress++
+            if (progress == 1) return@forEach
+
             notificationUtil.updateCacheMovingNotification(id, progress, totalFiles)
             val destFile = File(destination.absolutePath + "/${it.absolutePath.removePrefix(cachePath)}")
             if (it.isDirectory) {
@@ -58,6 +66,11 @@ class MoveCacheFilesWorker(
                 it.renameTo(destFile)
             }
         }
+
+        downloadFolders.listFiles()?.forEach { child ->
+            child.deleteRecursively()
+        }
+
         val handler = Handler(Looper.getMainLooper())
         handler.post {
             Toast.makeText(context, context.getString(R.string.ok), Toast.LENGTH_SHORT).show()

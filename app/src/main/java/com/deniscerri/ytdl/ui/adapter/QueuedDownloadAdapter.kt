@@ -13,7 +13,6 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.PopupMenu
 import android.widget.TextView
-import androidx.core.content.ContextCompat
 import androidx.core.view.isVisible
 import androidx.paging.PagingDataAdapter
 import androidx.preference.PreferenceManager
@@ -21,10 +20,9 @@ import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.RecyclerView
 import com.deniscerri.ytdl.R
+import com.deniscerri.ytdl.database.enums.DownloadType
 import com.deniscerri.ytdl.database.models.DownloadItemSimple
-import com.deniscerri.ytdl.database.viewmodel.DownloadViewModel
 import com.deniscerri.ytdl.util.Extensions.loadThumbnail
-import com.deniscerri.ytdl.util.Extensions.popup
 import com.deniscerri.ytdl.util.FileUtil
 import com.deniscerri.ytdl.util.UiUtil
 import com.google.android.material.card.MaterialCardView
@@ -101,10 +99,10 @@ class QueuedDownloadAdapter(onItemClickListener: OnItemClickListener, activity: 
         //DOWNLOAD TYPE -----------------------------
         val type = card.findViewById<TextView>(R.id.download_type)
         when(item.type){
-            DownloadViewModel.Type.audio -> type.setCompoundDrawablesRelativeWithIntrinsicBounds(
+            DownloadType.audio -> type.setCompoundDrawablesRelativeWithIntrinsicBounds(
                 R.drawable.ic_music_formatcard, 0,0,0
             )
-            DownloadViewModel.Type.video -> type.setCompoundDrawablesRelativeWithIntrinsicBounds(
+            DownloadType.video -> type.setCompoundDrawablesRelativeWithIntrinsicBounds(
                 R.drawable.ic_video_formatcard, 0,0,0
             )
             else -> type.setCompoundDrawablesRelativeWithIntrinsicBounds(
@@ -234,8 +232,6 @@ class QueuedDownloadAdapter(onItemClickListener: OnItemClickListener, activity: 
         notifyDataSetChanged()
     }
 
-
-
     private fun checkCard(card: MaterialCardView, itemID: Long, position: Int) {
         if (card.isChecked) {
             card.strokeWidth = 0
@@ -267,7 +263,7 @@ class QueuedDownloadAdapter(onItemClickListener: OnItemClickListener, activity: 
             }
 
             override fun areContentsTheSame(oldItem: DownloadItemSimple, newItem: DownloadItemSimple): Boolean {
-                return oldItem.id == newItem.id && oldItem.title == newItem.title && oldItem.author == newItem.author && oldItem.thumb == newItem.thumb
+                return oldItem.id == newItem.id && oldItem.title == newItem.title && oldItem.author == newItem.author && oldItem.thumb == newItem.thumb && oldItem.queueOrder == newItem.queueOrder
             }
         }
     }

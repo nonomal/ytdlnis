@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.DialogInterface
+import android.content.SharedPreferences
 import android.graphics.Canvas
 import android.graphics.Color
 import android.os.Bundle
@@ -30,7 +31,6 @@ import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.afollestad.materialdialogs.utils.MDUtil.getStringArray
 import com.deniscerri.ytdl.MainActivity
 import com.deniscerri.ytdl.R
 import com.deniscerri.ytdl.database.DBManager.SORTING
@@ -50,7 +50,6 @@ import it.xabaras.android.recyclerview.swipedecorator.RecyclerViewSwipeDecorator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 
@@ -64,6 +63,7 @@ class CommandTemplatesFragment : Fragment(), TemplatesAdapter.OnItemClickListene
     private lateinit var mainActivity: MainActivity
     private lateinit var sortChip: Chip
     private lateinit var  selectedObjects: ArrayList<CommandTemplate>
+    private lateinit var preferences: SharedPreferences
     private var actionMode : ActionMode? = null
     private val jsonFormat = Json { prettyPrint = true }
 
@@ -95,8 +95,8 @@ class CommandTemplatesFragment : Fragment(), TemplatesAdapter.OnItemClickListene
         recyclerView = view.findViewById(R.id.template_recyclerview)
         recyclerView.layoutManager = LinearLayoutManager(context)
         recyclerView.adapter = templatesAdapter
-        val preferences = PreferenceManager.getDefaultSharedPreferences(requireContext())
-        if (preferences.getStringSet("swipe_gesture", requireContext().getStringArray(R.array.swipe_gestures_values).toSet())!!.toList().contains("templates")){
+        preferences =  PreferenceManager.getDefaultSharedPreferences(requireContext())
+        if (preferences.getStringSet("swipe_gesture", requireContext().resources.getStringArray(R.array.swipe_gestures_values).toSet())!!.toList().contains("templates")){
             val itemTouchHelper = ItemTouchHelper(simpleCallback)
             itemTouchHelper.attachToRecyclerView(recyclerView)
         }
@@ -117,8 +117,8 @@ class CommandTemplatesFragment : Fragment(), TemplatesAdapter.OnItemClickListene
         commandTemplateViewModel.sortOrder.observe(viewLifecycleOwner){
             if (it != null){
                 when(it){
-                    SORTING.ASC -> sortChip.chipIcon = ContextCompat.getDrawable(requireContext(), R.drawable.ic_down)
-                    SORTING.DESC -> sortChip.chipIcon = ContextCompat.getDrawable(requireContext(), R.drawable.ic_up)
+                    SORTING.ASC -> sortChip.chipIcon = ContextCompat.getDrawable(requireContext(), R.drawable.ic_up)
+                    SORTING.DESC -> sortChip.chipIcon = ContextCompat.getDrawable(requireContext(), R.drawable.ic_down)
                 }
             }
         }
@@ -246,10 +246,10 @@ class CommandTemplatesFragment : Fragment(), TemplatesAdapter.OnItemClickListene
     private fun changeSortIcon(item: TextView, order: SORTING){
         when(order){
             SORTING.DESC ->{
-                item.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_up, 0,0,0)
+                item.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_down, 0,0,0)
             }
             SORTING.ASC ->                 {
-                item.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_down, 0,0,0)
+                item.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_up, 0,0,0)
             }
         }
     }
@@ -264,9 +264,10 @@ class CommandTemplatesFragment : Fragment(), TemplatesAdapter.OnItemClickListene
         }
     }
 
+    @SuppressLint("NotifyDataSetChanged")
     override fun onItemClick(commandTemplate: CommandTemplate, index: Int) {
         UiUtil.showCommandTemplateCreationOrUpdatingSheet(commandTemplate,mainActivity, this, commandTemplateViewModel, newTemplate = {
-            templatesAdapter.notifyItemChanged(index)
+            templatesAdapter.notifyDataSetChanged()
         }, {})
 
     }

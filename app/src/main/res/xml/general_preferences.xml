@@ -9,7 +9,6 @@
             android:defaultValue=""
             android:icon="@drawable/baseline_translate_24"
             app:key="app_language"
-            app:useSimpleSummaryProvider="true"
             app:summary=""
             app:title="@string/language" />
 
@@ -21,6 +20,13 @@
             app:key="ytdlnis_theme"
             app:summary="@string/defaultValue"
             app:title="@string/Theme" />
+
+        <Preference
+            android:defaultValue="default"
+            android:icon="@drawable/ic_frame"
+            android:title="@string/app_icon"
+            android:summary="@string/defaultValue"
+            app:key="ytdlnis_icon" />
 
         <ListPreference
             android:entries="@array/accents"
@@ -70,19 +76,34 @@
     </PreferenceCategory>
 
     <PreferenceCategory android:title="YouTube">
-        <SwitchPreferenceCompat
-            android:widgetLayout="@layout/preferece_material_switch"
-            app:defaultValue="true"
+        <ListPreference
             android:icon="@drawable/baseline_recommend_24"
-            android:key="home_recommendations"
+            android:key="recommendations_home"
+            android:defaultValue=""
+            android:entries="@array/video_recommendations"
+            android:entryValues="@array/video_recommnedations_values"
             app:summary="@string/video_recommendations_summary"
             app:title="@string/video_recommendations" />
+
+        <EditTextPreference
+            android:icon="@drawable/baseline_recommend_24"
+            app:key="custom_home_recommendation_url"
+            app:useSimpleSummaryProvider="true" />
 
         <EditTextPreference
             android:icon="@drawable/ic_key"
             app:key="api_key"
             android:summary="@string/api_key_summary"
             app:title="@string/api_key" />
+
+        <ListPreference
+            android:defaultValue="YT_DLP"
+            android:entries="@array/data_fetching_extractor_youtube"
+            android:entryValues="@array/data_fetching_extractor_youtube_values"
+            android:icon="@drawable/baseline_manage_search_24"
+            app:key="youtube_data_fetching_extractor"
+            app:useSimpleSummaryProvider="true"
+            app:title="@string/data_fetching_extractor_youtube" />
 
         <ListPreference
             android:defaultValue="yt-dlp"
@@ -92,15 +113,6 @@
             app:key="formats_source"
             app:useSimpleSummaryProvider="true"
             app:title="@string/format_source" />
-
-        <Preference
-            android:icon="@drawable/ic_dns"
-            app:key="piped_instance"
-            app:defaultValue=""
-            app:isPreferenceVisible="false"
-            android:summary="@string/piped_instance_summary"
-            app:title="@string/piped_instance" />
-
 
 
         <SwitchPreferenceCompat
@@ -120,7 +132,6 @@
             android:entryValues="@array/countries_values"
             app:icon="@drawable/ic_language"
             app:useSimpleSummaryProvider="true"
-            app:dependency="home_recommendations"
             app:key="locale"
             app:title="@string/preferred_locale" />
 
@@ -133,7 +144,7 @@
             app:title="@string/preferred_home_screen" />
 
         <Preference
-            android:defaultValue="Home,History,More"
+            android:defaultValue="Home,History,Queue,More"
             android:icon="@drawable/baseline_home_filled_24"
             android:key="navigation_bar"
             android:title="@string/preferred_home_screen" />
@@ -155,6 +166,15 @@
             app:key="search_engine"
             app:summary="@string/preferred_search_engine_summary"
             app:title="@string/preferred_search_engine" />
+
+
+        <SwitchPreferenceCompat
+            android:widgetLayout="@layout/preferece_material_switch"
+            app:defaultValue="true"
+            app:icon="@drawable/ic_clipboard"
+            app:key="check_clipboard_home"
+            app:summary="@string/check_clipboard_home_summary"
+            app:title="@string/check_clipboard_home" />
 
         <SwitchPreferenceCompat
             android:widgetLayout="@layout/preferece_material_switch"
@@ -189,6 +209,13 @@
 
         <SwitchPreferenceCompat
             android:widgetLayout="@layout/preferece_material_switch"
+            app:defaultValue="false"
+            android:icon="@drawable/baseline_share2_24"
+            android:key="show_quick_download_share"
+            app:title="@string/show_quick_download_share_menu" />
+
+        <SwitchPreferenceCompat
+            android:widgetLayout="@layout/preferece_material_switch"
             app:defaultValue="true"
             android:icon="@drawable/baseline_numbers_24"
             android:key="show_count_downloads"
@@ -199,6 +226,13 @@
             app:icon="@drawable/ic_battery"
             app:key="ignore_battery"
             app:title="@string/ignore_battery_optimization" />
+
+        <Preference
+            app:icon="@drawable/baseline_reset_tv_24"
+            app:key="reset_preferences"
+            android:summary="@string/reset_preferences_in_screen"
+            app:title="@string/reset" />
+
     </PreferenceCategory>
 
 </PreferenceScreen>

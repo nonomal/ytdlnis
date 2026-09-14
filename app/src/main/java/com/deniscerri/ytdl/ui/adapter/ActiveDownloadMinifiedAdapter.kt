@@ -11,23 +11,19 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.PopupMenu
 import android.widget.TextView
-import androidx.core.content.ContextCompat
 import androidx.core.view.get
-import androidx.core.view.isVisible
-import androidx.media3.exoplayer.offline.Download
 import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.AsyncDifferConfig
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.deniscerri.ytdl.R
+import com.deniscerri.ytdl.database.enums.DownloadType
 import com.deniscerri.ytdl.database.models.DownloadItem
 import com.deniscerri.ytdl.database.repository.DownloadRepository
-import com.deniscerri.ytdl.database.viewmodel.DownloadViewModel
 import com.deniscerri.ytdl.util.Extensions.loadThumbnail
 import com.deniscerri.ytdl.util.Extensions.popup
 import com.deniscerri.ytdl.util.FileUtil
-import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.progressindicator.LinearProgressIndicator
 
@@ -91,10 +87,10 @@ class ActiveDownloadMinifiedAdapter(onItemClickListener: OnItemClickListener, ac
         //DOWNLOAD TYPE -----------------------------
         val type = card.findViewById<TextView>(R.id.download_type)
         when(item.type){
-            DownloadViewModel.Type.audio -> type.setCompoundDrawablesRelativeWithIntrinsicBounds(
+            DownloadType.audio -> type.setCompoundDrawablesRelativeWithIntrinsicBounds(
                 R.drawable.ic_music_formatcard, 0, 0, 0
             )
-            DownloadViewModel.Type.video -> type.setCompoundDrawablesRelativeWithIntrinsicBounds(
+            DownloadType.video -> type.setCompoundDrawablesRelativeWithIntrinsicBounds(
                 R.drawable.ic_video_formatcard, 0, 0, 0
             )
             else -> type.setCompoundDrawablesRelativeWithIntrinsicBounds(
@@ -125,39 +121,39 @@ class ActiveDownloadMinifiedAdapter(onItemClickListener: OnItemClickListener, ac
 
         val fileSize = card.findViewById<TextView>(R.id.file_size)
         val fileSizeReadable = FileUtil.convertFileSize(item.format.filesize)
-        if (fileSizeReadable == "?") fileSize.visibility = View.GONE
+        if (fileSizeReadable == "?" && item.downloadSections.isNotBlank()) fileSize.visibility = View.GONE
         else fileSize.text = fileSizeReadable
 
         val menu = card.findViewById<View>(R.id.options)
-        //val paused = sharedPreferences.getBoolean("paused_downloads", false) || item.status == DownloadRepository.Status.ActivePaused.toString()
+        val paused = item.status == DownloadRepository.Status.Paused.toString()
         menu.setOnClickListener {
             val popup = PopupMenu(activity, it)
             popup.menuInflater.inflate(R.menu.active_downloads_minified, popup.menu)
             if (Build.VERSION.SDK_INT > 27) popup.menu.setGroupDividerEnabled(true)
 
-//            val pause = popup.menu[0]
-//            val resume = popup.menu[1]
-//
-//            if (paused){
-//                pause.isVisible = false
-//                resume.isVisible = true
-//            }else{
-//                pause.isVisible = true
-//                resume.isVisible = false
-//            }
+            val pause = popup.menu[0]
+            val resume = popup.menu[1]
+
+            if (paused){
+                pause.isVisible = false
+                resume.isVisible = true
+            }else{
+                pause.isVisible = true
+                resume.isVisible = false
+            }
 
             popup.setOnMenuItemClickListener { m ->
                 when(m.itemId){
-//                    R.id.pause -> {
-//                        onItemClickListener.onPauseClick(item.id, ActiveDownloadAdapter.ActiveDownloadAction.Pause, position)
-//                        if (progressBar.progress == 0) progressBar.isIndeterminate = false
-//                        popup.dismiss()
-//                    }
-//                    R.id.resume -> {
-//                        onItemClickListener.onPauseClick(item.id, ActiveDownloadAdapter.ActiveDownloadAction.Resume, position)
-//                        progressBar.isIndeterminate = true
-//                        popup.dismiss()
-//                    }
+                    R.id.pause -> {
+                        onItemClickListener.onPauseClick(item.id, position)
+                        if (progressBar.progress == 0) progressBar.isIndeterminate = false
+                        popup.dismiss()
+                    }
+                    R.id.resume -> {
+                        onItemClickListener.onResumeClick(item.id, position)
+                        progressBar.isIndeterminate = true
+                        popup.dismiss()
+                    }
                     R.id.cancel -> {
                         onItemClickListener.onCancelClick(item.id)
                         popup.dismiss()
@@ -170,7 +166,7 @@ class ActiveDownloadMinifiedAdapter(onItemClickListener: OnItemClickListener, ac
 
         }
 
-        progressBar.isIndeterminate = !sharedPreferences.getBoolean("paused_downloads", false)
+        progressBar.isIndeterminate = !paused
 
         card.setOnClickListener {
             onItemClickListener.onCardClick()
@@ -178,6 +174,8 @@ class ActiveDownloadMinifiedAdapter(onItemClickListener: OnItemClickListener, ac
     }
     interface OnItemClickListener {
         fun onCancelClick(itemID: Long)
+        fun onPauseClick(itemID: Long, position: Int)
+        fun onResumeClick(itemID: Long, position: Int)
         fun onCardClick()
     }
 

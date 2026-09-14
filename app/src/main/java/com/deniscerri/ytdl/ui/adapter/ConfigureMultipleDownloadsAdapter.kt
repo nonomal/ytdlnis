@@ -1,5 +1,6 @@
 package com.deniscerri.ytdl.ui.adapter
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.SharedPreferences
 import android.os.Handler
@@ -7,31 +8,34 @@ import android.os.Looper
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.CheckBox
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.core.view.isVisible
+import androidx.paging.PagingDataAdapter
 import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.AsyncDifferConfig
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.deniscerri.ytdl.R
+import com.deniscerri.ytdl.database.enums.DownloadType
 import com.deniscerri.ytdl.database.models.DownloadItemConfigureMultiple
-import com.deniscerri.ytdl.database.viewmodel.DownloadViewModel
 import com.deniscerri.ytdl.util.Extensions.loadThumbnail
 import com.deniscerri.ytdl.util.Extensions.popup
 import com.deniscerri.ytdl.util.FileUtil
 import com.google.android.material.button.MaterialButton
 import java.util.Locale
 
-class ConfigureMultipleDownloadsAdapter(onItemClickListener: OnItemClickListener, activity: Activity) : ListAdapter<DownloadItemConfigureMultiple?, ConfigureMultipleDownloadsAdapter.ViewHolder>(
-    AsyncDifferConfig.Builder(
-    DIFF_CALLBACK
-).build()) {
+class ConfigureMultipleDownloadsAdapter(onItemClickListener: OnItemClickListener, activity: Activity) : PagingDataAdapter<DownloadItemConfigureMultiple, ConfigureMultipleDownloadsAdapter.ViewHolder>(DIFF_CALLBACK) {
     private val onItemClickListener: OnItemClickListener
     private val activity: Activity
     private val sharedPreferences : SharedPreferences
+    private var checkedItems: MutableSet<Long> = mutableSetOf()
+    private var currentItems: Set<Long> = setOf()
+    private var _isCheckingItems: Boolean = false
+    private var inverted: Boolean = false
 
     init {
         this.onItemClickListener = onItemClickListener
@@ -53,11 +57,75 @@ class ConfigureMultipleDownloadsAdapter(onItemClickListener: OnItemClickListener
         return ViewHolder(cardView)
     }
 
+    fun isCheckingItems() : Boolean {
+        return _isCheckingItems
+    }
+
+    fun getCheckedItemsOrNull(): List<Long>? {
+        if (!_isCheckingItems) return null
+
+        val res = if (inverted) {
+            currentItems.filter { !checkedItems.contains(it) }
+        }else {
+            checkedItems
+        }
+
+        return res.toList().ifEmpty { null }
+    }
+
+    fun getCheckedItemsSize() : Int {
+        return if (inverted){
+            currentItems.size - checkedItems.size
+        }else{
+            checkedItems.size
+        }
+    }
+
+    fun removeItemsFromCheckList(ids: List<Long>) {
+        checkedItems.removeAll(ids.toSet())
+    }
+
+    @SuppressLint("NotifyDataSetChanged")
+    fun clearCheckedItems() {
+        _isCheckingItems = false
+        inverted = false
+        checkedItems = mutableSetOf()
+        notifyDataSetChanged()
+    }
+
+    @SuppressLint("NotifyDataSetChanged")
+    fun selectItems(ids: List<Long>) {
+        checkedItems = mutableSetOf()
+        inverted = false
+        checkedItems.addAll(ids)
+        notifyDataSetChanged()
+    }
+
+    @SuppressLint("NotifyDataSetChanged")
+    fun checkAll() {
+        checkedItems = mutableSetOf()
+        inverted = true
+        notifyDataSetChanged()
+    }
+
+    @SuppressLint("NotifyDataSetChanged")
+    fun invertSelected() {
+        inverted = !inverted
+        notifyDataSetChanged()
+    }
+
+    @SuppressLint("NotifyDataSetChanged")
+    fun initCheckingItems(itemIDs: List<Long>) {
+        currentItems = itemIDs.toSet()
+        _isCheckingItems = true
+        checkedItems = mutableSetOf()
+        notifyDataSetChanged()
+    }
+
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
-        val item = getItem(position)
+        val item = getItem(position) ?: return
         val card = holder.cardView
         card.popup()
-        if (item == null) return
         card.tag = item.id.toString()
 
         val uiHandler = Handler(Looper.getMainLooper())
@@ -102,7 +170,7 @@ class ConfigureMultipleDownloadsAdapter(onItemClickListener: OnItemClickListener
             } else {
                 item.format.acodec.uppercase()
             }
-        if (codecText == "" || codecText == "none"){
+        if (codecText == "" || codecText == "none" || codecText == "DEFAULT"){
             codec.visibility = View.GONE
         }else{
             codec.visibility = View.VISIBLE
@@ -114,7 +182,7 @@ class ConfigureMultipleDownloadsAdapter(onItemClickListener: OnItemClickListener
         container.text = item.container.uppercase()
 
         val fileSize = card.findViewById<TextView>(R.id.file_size)
-        val fileSizeReadable = if(item.type != DownloadViewModel.Type.video){
+        val fileSizeReadable = if(item.type != DownloadType.video){
             FileUtil.convertFileSize(item.format.filesize)
         }else{
             if (item.format.filesize < 10L) {
@@ -148,11 +216,11 @@ class ConfigureMultipleDownloadsAdapter(onItemClickListener: OnItemClickListener
         }
 
         when(item.type) {
-            DownloadViewModel.Type.audio -> {
+            DownloadType.audio -> {
                 btn.setIconResource(R.drawable.ic_music)
                 btn.contentDescription = activity.getString(R.string.audio)
             }
-            DownloadViewModel.Type.video -> {
+            DownloadType.video -> {
                 btn.setIconResource(R.drawable.ic_video)
                 btn.contentDescription = activity.getString(R.string.video)
             }
@@ -162,25 +230,55 @@ class ConfigureMultipleDownloadsAdapter(onItemClickListener: OnItemClickListener
             }
         }
 
+        val checkbox = card.findViewById<CheckBox>(R.id.checkBox)
+        checkbox.isVisible = _isCheckingItems
+        checkbox.isChecked = (checkedItems.contains(item.id) && !inverted) || (inverted && !checkedItems.contains(item.id))
+        checkbox.setOnClickListener {
+            if (checkbox.isChecked) {
+                if (inverted) checkedItems.remove(item.id)
+                else checkedItems.add(item.id)
+                onItemClickListener.onCardChecked(item.id)
+            }else {
+                if (inverted) checkedItems.add(item.id)
+                else checkedItems.remove(item.id)
+                onItemClickListener.onCardUnChecked(item.id)
+            }
+        }
+
+        val index = card.findViewById<TextView>(R.id.index)
+        index.isVisible = _isCheckingItems
+        index.text = (position + 1).toString()
+
         card.setOnClickListener {
-            onItemClickListener.onCardClick(item.id)
+            if (_isCheckingItems) {
+                checkbox.performClick()
+            }else {
+                onItemClickListener.onCardClick(item.id)
+            }
         }
 
         card.setOnLongClickListener {
-            onItemClickListener.onDelete(item.id); true
+            if (_isCheckingItems) {
+                checkbox.performClick()
+            }else{
+                onItemClickListener.onDelete(item.id)
+            }
+            true
         }
     }
 
     interface OnItemClickListener {
         fun onButtonClick(id: Long)
         fun onCardClick(id: Long)
+        fun onCardChecked(id: Long)
+        fun onCardUnChecked(id: Long)
         fun onDelete(id: Long)
     }
 
     companion object {
         private val DIFF_CALLBACK: DiffUtil.ItemCallback<DownloadItemConfigureMultiple> = object : DiffUtil.ItemCallback<DownloadItemConfigureMultiple>() {
             override fun areItemsTheSame(oldItem: DownloadItemConfigureMultiple, newItem: DownloadItemConfigureMultiple): Boolean {
-                return oldItem.url == newItem.url
+                return oldItem.id == newItem.id
             }
 
             override fun areContentsTheSame(oldItem: DownloadItemConfigureMultiple, newItem: DownloadItemConfigureMultiple): Boolean {

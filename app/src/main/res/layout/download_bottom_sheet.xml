@@ -19,8 +19,8 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginHorizontal="20dp"
-            android:orientation="horizontal"
-            android:paddingTop="20dp">
+            android:layout_marginTop="20dp"
+            android:orientation="horizontal">
 
             <com.facebook.shimmer.ShimmerFrameLayout
                 android:visibility="gone"
@@ -56,7 +56,7 @@
                 android:layout_marginEnd="20dp"
                 android:singleLine="false"
                 android:text="@string/download"
-                android:textSize="25sp"
+                android:textSize="20sp"
                 app:layout_constraintEnd_toStartOf="@+id/bottomsheet_schedule_button"
                 app:layout_constraintHorizontal_bias="0.0"
                 app:layout_constraintStart_toStartOf="parent"
@@ -104,6 +104,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginEnd="10dp"
+                android:outlineProvider="none"
                 app:icon="@drawable/ic_clock"
                 android:contentDescription="@string/schedule"
                 app:layout_constraintBottom_toBottomOf="@id/bottomsheet_download_button"
@@ -116,11 +117,15 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:autoLink="all"
+                android:elevation="0dp"
+                android:outlineProvider="none"
+                android:stateListAnimator="@null"
                 android:text="@string/download"
                 app:icon="@drawable/ic_down"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintEnd_toEndOf="parent"
-                app:layout_constraintTop_toTopOf="parent" />
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintVertical_bias="0.0" />
 
 
         </androidx.constraintlayout.widget.ConstraintLayout>
@@ -184,9 +189,11 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_margin="10dp"
-                android:contentDescription="@string/incognito"
-                app:icon="@drawable/ic_nightly"
+                android:layout_marginEnd="16dp"
                 android:alpha="0.3"
+                android:contentDescription="@string/incognito"
+                android:outlineProvider="none"
+                app:icon="@drawable/ic_nightly"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintTop_toTopOf="parent" />
@@ -200,7 +207,7 @@
             android:gravity="end"
             android:visibility="gone"
             android:paddingBottom="10dp"
-            android:paddingHorizontal="20dp"
+            android:layout_marginHorizontal="15dp"
             android:layout_height="wrap_content">
 
             <Button
@@ -209,6 +216,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:autoLink="all"
+                android:outlineProvider="none"
                 android:text="@string/update"
                 app:icon="@drawable/ic_update"
                 app:layout_constraintBottom_toBottomOf="parent"

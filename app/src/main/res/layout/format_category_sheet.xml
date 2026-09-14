@@ -83,7 +83,6 @@
 
     </LinearLayout>
 
-
     <LinearLayout
         android:id="@+id/format_source_linear"
         android:layout_width="match_parent"
@@ -102,6 +101,5 @@
 
 
     </LinearLayout>
-
 
 </LinearLayout>

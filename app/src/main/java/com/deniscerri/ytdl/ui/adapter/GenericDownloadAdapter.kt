@@ -16,9 +16,9 @@ import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
 import com.deniscerri.ytdl.R
+import com.deniscerri.ytdl.database.enums.DownloadType
 import com.deniscerri.ytdl.database.models.DownloadItemSimple
 import com.deniscerri.ytdl.database.repository.DownloadRepository
-import com.deniscerri.ytdl.database.viewmodel.DownloadViewModel
 import com.deniscerri.ytdl.util.Extensions.loadThumbnail
 import com.deniscerri.ytdl.util.Extensions.popup
 import com.deniscerri.ytdl.util.FileUtil
@@ -85,10 +85,10 @@ class GenericDownloadAdapter(onItemClickListener: OnItemClickListener, activity:
         //DOWNLOAD TYPE -----------------------------
         val type = card.findViewById<TextView>(R.id.download_type)
         when(item.type){
-            DownloadViewModel.Type.audio -> type.setCompoundDrawablesRelativeWithIntrinsicBounds(
+            DownloadType.audio -> type.setCompoundDrawablesRelativeWithIntrinsicBounds(
                 R.drawable.ic_music_formatcard, 0,0,0
             )
-            DownloadViewModel.Type.video -> type.setCompoundDrawablesRelativeWithIntrinsicBounds(
+            DownloadType.video -> type.setCompoundDrawablesRelativeWithIntrinsicBounds(
                 R.drawable.ic_video_formatcard, 0,0,0
             )
             else -> type.setCompoundDrawablesRelativeWithIntrinsicBounds(

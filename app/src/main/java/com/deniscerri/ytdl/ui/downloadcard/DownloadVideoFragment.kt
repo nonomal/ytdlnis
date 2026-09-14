@@ -23,18 +23,23 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.preference.PreferenceManager
-import com.afollestad.materialdialogs.utils.MDUtil.getStringArray
 import com.deniscerri.ytdl.R
+import com.deniscerri.ytdl.database.enums.DownloadType
 import com.deniscerri.ytdl.database.models.DownloadItem
 import com.deniscerri.ytdl.database.models.Format
 import com.deniscerri.ytdl.database.models.ResultItem
 import com.deniscerri.ytdl.database.viewmodel.DownloadViewModel
-import com.deniscerri.ytdl.database.viewmodel.DownloadViewModel.Type
+import com.deniscerri.ytdl.database.viewmodel.FormatViewModel
 import com.deniscerri.ytdl.database.viewmodel.ResultViewModel
+import com.deniscerri.ytdl.database.viewmodel.YTDLPViewModel
+import com.deniscerri.ytdl.ui.downloadcard.crop.CropVideoBottomSheetDialog
+import com.deniscerri.ytdl.util.Extensions.applyFilenameTemplateForCuts
+import com.deniscerri.ytdl.util.Extensions.createBadge
 import com.deniscerri.ytdl.util.FileUtil
 import com.deniscerri.ytdl.util.FormatUtil
 import com.deniscerri.ytdl.util.UiUtil
 import com.google.android.material.card.MaterialCardView
+import com.google.android.material.chip.Chip
 import com.google.android.material.snackbar.Snackbar
 import com.google.android.material.textfield.TextInputLayout
 import com.google.android.material.textfield.TextInputLayout.END_ICON_CUSTOM
@@ -43,6 +48,7 @@ import com.google.gson.Gson
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -52,7 +58,9 @@ class DownloadVideoFragment(private var resultItem: ResultItem? = null, private 
     private var fragmentView: View? = null
     private var activity: Activity? = null
     private lateinit var downloadViewModel : DownloadViewModel
+    private lateinit var formatViewModel : FormatViewModel
     private lateinit var resultViewModel: ResultViewModel
+    private lateinit var ytdlpViewModel: YTDLPViewModel
     private lateinit var preferences: SharedPreferences
     private lateinit var shownFields: List<String>
     lateinit var title : TextInputLayout
@@ -65,6 +73,8 @@ class DownloadVideoFragment(private var resultItem: ResultItem? = null, private 
 
     lateinit var downloadItem: DownloadItem
 
+    private var disabledCutClicked: Boolean = false
+
 
     @SuppressLint("RestrictedApi")
     override fun onCreateView(
@@ -76,11 +86,13 @@ class DownloadVideoFragment(private var resultItem: ResultItem? = null, private 
         activity = getActivity()
         downloadViewModel = ViewModelProvider(this)[DownloadViewModel::class.java]
         resultViewModel = ViewModelProvider(this)[ResultViewModel::class.java]
+        formatViewModel = ViewModelProvider(requireActivity())[FormatViewModel::class.java]
+        ytdlpViewModel = ViewModelProvider(requireActivity())[YTDLPViewModel::class.java]
         val formatUtil = FormatUtil(requireContext())
         genericVideoFormats = formatUtil.getGenericVideoFormats(requireContext().resources)
         genericAudioFormats = formatUtil.getGenericAudioFormats(requireContext().resources)
         preferences = PreferenceManager.getDefaultSharedPreferences(requireContext())
-        shownFields = preferences.getStringSet("modify_download_card", requireContext().getStringArray(R.array.modify_download_card_values).toSet())!!.toList()
+        shownFields = preferences.getStringSet("modify_download_card", requireContext().resources.getStringArray(R.array.modify_download_card_values).toSet())!!.toList()
         return fragmentView
     }
 
@@ -94,8 +106,8 @@ class DownloadVideoFragment(private var resultItem: ResultItem? = null, private 
                     downloadItem.apply {
                         title = resultItem!!.title
                         author = resultItem!!.author
-                        allFormats = resultItem!!.formats
-                        format = downloadViewModel.getFormat(allFormats, Type.video)
+                        allFormats = resultItem!!.formats.toMutableList()
+                        format = downloadViewModel.getFormat(allFormats, DownloadType.video)
                         duration = resultItem!!.duration
                         playlistIndex = resultItem!!.playlistIndex
                         playlistURL = resultItem!!.playlistURL
@@ -111,7 +123,7 @@ class DownloadVideoFragment(private var resultItem: ResultItem? = null, private 
                     val string = Gson().toJson(currentDownloadItem, DownloadItem::class.java)
                     Gson().fromJson(string, DownloadItem::class.java)
                 }else{
-                    downloadViewModel.createDownloadItemFromResult(resultItem, url, Type.video)
+                    downloadViewModel.createDownloadItemFromResult(resultItem, url, DownloadType.video)
                 }
             }
 
@@ -199,13 +211,13 @@ class DownloadVideoFragment(private var resultItem: ResultItem? = null, private 
                     formats.addAll(resultItem?.formats ?: listOf())
                 }else{
                     //if its updating a present downloaditem and its the wrong category
-                    if (currentDownloadItem!!.type != Type.video){
-                        downloadItem.type = Type.video
+                    if (currentDownloadItem!!.type != DownloadType.video){
+                        downloadItem.type = DownloadType.video
                         runCatching {
-                            downloadItem.format = downloadViewModel.getFormat(downloadItem.allFormats, Type.video)
+                            downloadItem.format = downloadViewModel.getFormat(downloadItem.allFormats, DownloadType.video)
                             if (downloadItem.videoPreferences.audioFormatIDs.isEmpty()){
                                 downloadItem.videoPreferences.audioFormatIDs.add(
-                                    downloadViewModel.getFormat(downloadItem.allFormats, Type.audio).format_id
+                                    downloadViewModel.getFormat(downloadItem.allFormats, DownloadType.audio).format_id
                                 )
                             }
                         }.onFailure {
@@ -237,7 +249,16 @@ class DownloadVideoFragment(private var resultItem: ResultItem? = null, private 
                 val formatCard = view.findViewById<MaterialCardView>(R.id.format_card_constraintLayout)
 
                 val chosenFormat = downloadItem.format
-                UiUtil.populateFormatCard(requireContext(), formatCard, chosenFormat, downloadItem.allFormats.filter { downloadItem.videoPreferences.audioFormatIDs.contains(it.format_id) })
+                val chosenAudioFormats = downloadItem.allFormats.filter { downloadItem.videoPreferences.audioFormatIDs.contains(it.format_id) }
+                val filesize = UiUtil.populateFormatCard(
+                    requireContext(),
+                    formatCard,
+                    chosenFormat,
+                    chosenAudioFormats,
+                    showSize = downloadItem.downloadSections.isEmpty()
+                )
+                formatViewModel.checkFreeSpace(filesize, downloadItem.downloadPath)
+
                 val listener = object : OnFormatClickListener {
                     override fun onFormatClick(formatTuple: FormatTuple) {
                         formatTuple.format?.apply {
@@ -247,17 +268,18 @@ class DownloadVideoFragment(private var resultItem: ResultItem? = null, private 
                         formatTuple.audioFormats?.map { it.format_id }?.let {
                             downloadItem.videoPreferences.audioFormatIDs.addAll(it)
                         }
-                        UiUtil.populateFormatCard(requireContext(), formatCard, downloadItem.format,
-                            if(downloadItem.videoPreferences.removeAudio) listOf() else formatTuple.audioFormats
+                        val filesize = UiUtil.populateFormatCard(requireContext(), formatCard, downloadItem.format,
+                            if(downloadItem.videoPreferences.removeAudio) listOf() else formatTuple.audioFormats,
+                            showSize = downloadItem.downloadSections.isEmpty()
                         )
+                        formatViewModel.checkFreeSpace(filesize, downloadItem.downloadPath)
                     }
 
                     override fun onFormatsUpdated(allFormats: List<Format>) {
                         lifecycleScope.launch {
                             withContext(Dispatchers.IO){
                                 resultItem?.apply {
-                                    this.formats.removeAll(formats)
-                                    this.formats.addAll(allFormats.filter { !genericVideoFormats.contains(it) })
+                                    this.formats = allFormats.filter { !genericVideoFormats.contains(it) }
                                     resultViewModel.update(this)
                                 }
 
@@ -267,19 +289,22 @@ class DownloadVideoFragment(private var resultItem: ResultItem? = null, private 
                             }
                         }
                         formats = allFormats.filter { !genericVideoFormats.contains(it) }.toMutableList()
-                        val preferredFormat = downloadViewModel.getFormat(formats, Type.video)
+                        val preferredFormat = downloadViewModel.getFormat(formats, DownloadType.video)
                         val preferredAudioFormats = downloadViewModel.getPreferredAudioFormats(formats)
                         downloadItem.format = preferredFormat
                         downloadItem.allFormats = formats
-                        UiUtil.populateFormatCard(requireContext(), formatCard, preferredFormat,
-                            if(downloadItem.videoPreferences.removeAudio) listOf() else formats.filter { preferredAudioFormats.contains(it.format_id) }
+                        val filesize = UiUtil.populateFormatCard(requireContext(), formatCard, preferredFormat,
+                            if(downloadItem.videoPreferences.removeAudio) listOf() else formats.filter { preferredAudioFormats.contains(it.format_id) },
+                            showSize = downloadItem.downloadSections.isEmpty()
                         )
+                        formatViewModel.checkFreeSpace(filesize, downloadItem.downloadPath)
                     }
 
                 }
                 formatCard.setOnClickListener{
                     if (parentFragmentManager.findFragmentByTag("formatSheet") == null){
-                        val bottomSheet = FormatSelectionBottomSheetDialog(listOf(downloadItem), listener)
+                        formatViewModel.setItem(downloadItem, !nonSpecific)
+                        val bottomSheet = FormatSelectionBottomSheetDialog(listener)
                         bottomSheet.show(parentFragmentManager, "formatSheet")
                     }
                 }
@@ -289,7 +314,7 @@ class DownloadVideoFragment(private var resultItem: ResultItem? = null, private 
                     true
                 }
 
-                container?.isEnabled = true
+                container?.isEnabled = !downloadItem.videoPreferences.compatibilityMode
                 containerAutoCompleteTextView?.setAdapter(
                     ArrayAdapter(
                         requireContext(),
@@ -297,7 +322,7 @@ class DownloadVideoFragment(private var resultItem: ResultItem? = null, private 
                         containers
                     )
                 )
-                if (currentDownloadItem == null || !containers.contains(downloadItem.container)){
+                if (currentDownloadItem == null || !containers.contains(downloadItem.container.ifEmpty { getString(R.string.defaultValue) })){
                     downloadItem.container = if (containerPreference == getString(R.string.defaultValue)) "" else containerPreference!!
                 }
                 containerAutoCompleteTextView!!.setText(
@@ -308,15 +333,31 @@ class DownloadVideoFragment(private var resultItem: ResultItem? = null, private 
                     AdapterView.OnItemClickListener { _: AdapterView<*>?, _: View?, index: Int, _: Long ->
                         downloadItem.container = containers[index]
                         if (containers[index] == getString(R.string.defaultValue)) downloadItem.container = ""
+                        if (containers[index] == "gif") {
+                            view.findViewById<Chip>(R.id.adjust_audio).isEnabled = false
+                            downloadItem.videoPreferences.removeAudio = true
+                            view.findViewById<Chip>(R.id.recode_video).isEnabled = false
+                            downloadItem.videoPreferences.recodeVideo = true
+                            view.findViewById<Chip>(R.id.recode_video)?.createBadge(requireContext(), 1)
+                        }else {
+                            view.findViewById<Chip>(R.id.adjust_audio).isEnabled = true
+                            downloadItem.videoPreferences.removeAudio = false
+                            view.findViewById<Chip>(R.id.recode_video).isEnabled = true
+                            downloadItem.videoPreferences.recodeVideo = false
+                            view.findViewById<Chip>(R.id.recode_video)?.createBadge(requireContext(), 0)
+                        }
                     }
-
-
+                if (downloadItem.videoPreferences.compatibilityMode) {
+                    containerAutoCompleteTextView.setText("mp4",false)
+                    downloadItem.container = "mp4"
+                }
                 view.findViewById<LinearLayout>(R.id.adjust).apply {
                     visibility = if (shownFields.contains("adjust_video")) View.VISIBLE else View.GONE
                     if (isVisible){
                         UiUtil.configureVideo(
                             view,
                             requireActivity(),
+                            ytdlpViewModel,
                             listOf(downloadItem),
                             embedSubsClicked = {
                                 downloadItem.videoPreferences.embedSubs = it
@@ -326,6 +367,9 @@ class DownloadVideoFragment(private var resultItem: ResultItem? = null, private 
                             },
                             splitByChaptersClicked = {
                                 downloadItem.videoPreferences.splitByChapters = it
+                            },
+                            embedThumbnailClicked = {
+                                downloadItem.videoPreferences.embedThumbnail = it
                             },
                             saveThumbnailClicked = {
                                 downloadItem.SaveThumb = it
@@ -349,17 +393,79 @@ class DownloadVideoFragment(private var resultItem: ResultItem? = null, private 
                                 if(isUpdatingData){
                                     val snack = Snackbar.make(view, context.getString(R.string.please_wait), Snackbar.LENGTH_SHORT)
                                     snack.show()
-                                }else{
-                                    val snack = Snackbar.make(view, context.getString(R.string.cut_unavailable), Snackbar.LENGTH_SHORT)
+                                }else if (downloadItem.duration == "0:00" || downloadItem.duration == "-1"){
+                                    val snack = Snackbar.make(view, context.getString(R.string.cut_unsupported), Snackbar.LENGTH_SHORT)
+                                    snack.show()
+                                }else if (!nonSpecific){
+                                    val snack = Snackbar.make(view, context.getString(R.string.cut_unavailable_please_update_item), Snackbar.LENGTH_SHORT)
                                     snack.setAction(R.string.update){
                                         CoroutineScope(SupervisorJob()).launch(Dispatchers.IO) {
                                             resultItem?.apply {
                                                 val rsVM = ViewModelProvider(requireActivity())[ResultViewModel::class.java]
                                                 rsVM.updateItemData(this)
+                                                disabledCutClicked = true
                                             }
                                         }
                                     }
                                     snack.show()
+                                }
+                            },
+                            cutValueChanged = {
+                                downloadItem.downloadSections = it
+                                val filesize = UiUtil.populateFormatCard(
+                                    requireContext(),
+                                    formatCard,
+                                    downloadItem.format,
+                                    if(downloadItem.videoPreferences.removeAudio) listOf()
+                                    else downloadItem.allFormats.filter { f -> downloadItem.videoPreferences.audioFormatIDs.contains(f.format_id) },
+                                    showSize = downloadItem.downloadSections.isEmpty()
+                                )
+                                formatViewModel.checkFreeSpace(filesize, downloadItem.downloadPath)
+
+                                if (it.isNotBlank()){
+                                    downloadItem.customFileNameTemplate = downloadItem.customFileNameTemplate.applyFilenameTemplateForCuts()
+                                }else{
+                                    downloadItem.customFileNameTemplate = downloadViewModel.applySubdirectoryPreferences(sharedPreferences.getString("file_name_template", "%(uploader).30B - %(title).170B")!!)
+                                }
+                            },
+                            cropClicked = { cropVideoListener ->
+                                if (parentFragmentManager.findFragmentByTag("cropVideoSheet") == null){
+                                    val bottomSheet = CropVideoBottomSheetDialog(
+                                        downloadItem,
+                                        resultItem?.urls ?: "",
+                                        cropVideoListener
+                                    )
+                                    bottomSheet.show(parentFragmentManager, "cropVideoSheet")
+                                }
+                            },
+                            cropDisabledClicked = {
+                                val isUpdatingData = ViewModelProvider(requireActivity())[ResultViewModel::class.java].updatingData.value
+                                if(isUpdatingData){
+                                    val snack = Snackbar.make(view, context.getString(R.string.please_wait), Snackbar.LENGTH_SHORT)
+                                    snack.show()
+                                }else if (downloadItem.duration == "0:00" || downloadItem.duration == "-1"){
+                                    val snack = Snackbar.make(view, context.getString(R.string.cut_unsupported), Snackbar.LENGTH_SHORT)
+                                    snack.show()
+                                }else if (!nonSpecific){
+                                    val snack = Snackbar.make(view, context.getString(R.string.cut_unavailable_please_update_item), Snackbar.LENGTH_SHORT)
+                                    snack.setAction(R.string.update){
+                                        CoroutineScope(SupervisorJob()).launch(Dispatchers.IO) {
+                                            resultItem?.apply {
+                                                val rsVM = ViewModelProvider(requireActivity())[ResultViewModel::class.java]
+                                                rsVM.updateItemData(this)
+                                                disabledCutClicked = true
+                                            }
+                                        }
+                                    }
+                                    snack.show()
+                                }
+                            },
+                            cropValueChanged = {
+                                downloadItem.videoPreferences.cropValues = it
+                                container.isEnabled = it.isBlank()
+                                view.findViewById<Chip>(R.id.recode_video)?.isEnabled = it.isBlank()
+                                if (it.isNotBlank()) {
+                                    downloadItem.videoPreferences.recodeVideo = false
                                 }
                             },
                             filenameTemplateSet = {
@@ -371,34 +477,75 @@ class DownloadVideoFragment(private var resultItem: ResultItem? = null, private 
                             saveAutoSubtitlesClicked = {
                                 downloadItem.videoPreferences.writeAutoSubs = it
                             },
+                            burnSubtitlesClicked = {
+                                downloadItem.videoPreferences.burnSubs = it
+                            },
                             subtitleLanguagesSet = {
                                 downloadItem.videoPreferences.subsLanguages = it
                             },
                             removeAudioClicked = {
                                 downloadItem.videoPreferences.removeAudio = it
-                                UiUtil.populateFormatCard(requireContext(), formatCard, downloadItem.format, if (it) listOf() else downloadItem.allFormats.filter { downloadItem.videoPreferences.audioFormatIDs.contains(it.format_id) })
+                                val filesize = UiUtil.populateFormatCard(
+                                    requireContext(),
+                                    formatCard,
+                                    downloadItem.format,
+                                    if (it) listOf() else downloadItem.allFormats.filter { downloadItem.videoPreferences.audioFormatIDs.contains(it.format_id) },
+                                    showSize = downloadItem.downloadSections.isEmpty()
+                                )
+                                formatViewModel.checkFreeSpace(filesize, downloadItem.downloadPath)
                             },
                             recodeVideoClicked = {
                                 downloadItem.videoPreferences.recodeVideo = it
                             },
+                            compatibilityModeClicked = {
+                                downloadItem.videoPreferences.compatibilityMode = it
+                                container.isEnabled = !it && downloadItem.videoPreferences.cropValues.isBlank()
+                                if (it) {
+                                    containerAutoCompleteTextView.setText("mp4",false)
+                                    downloadItem.container = "mp4"
+                                }
+                            },
                             alsoDownloadAsAudioClicked = {
                                 downloadItem.videoPreferences.alsoDownloadAsAudio = it
                             },
-                            extraCommandsClicked = {
+                            extraCommandsClicked = { returnValue ->
                                 val callback = object : ExtraCommandsListener {
                                     override fun onChangeExtraCommand(c: String) {
                                         downloadItem.extraCommands = c
+                                        returnValue(c)
                                     }
                                 }
 
                                 val bottomSheetDialog = AddExtraCommandsDialog(downloadItem, callback)
                                 bottomSheetDialog.show(parentFragmentManager, "extraCommands")
+                            },
+                            liveFromStart = {
+                                downloadItem.videoPreferences.liveFromStart = it
+                            },
+                            waitForVideo = { wait, value ->
+                                downloadItem.videoPreferences.waitForVideoMinutes = if (wait) value else 0
                             }
                         )
                     }
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
+            }
+
+            view.findViewById<Chip>(R.id.cut).apply {
+                if (this.isEnabled && savedInstanceState?.containsKey("click_cut") == true) {
+                    this.performClick()
+                }
+            }
+        }
+
+        lifecycleScope.launch {
+            formatViewModel.noFreeSpace.collectLatest {
+                if (it != null) {
+                    val snack = Snackbar.make(view, it, Snackbar.LENGTH_INDEFINITE)
+                    snack.setTextMaxLines(10)
+                    snack.show()
+                }
             }
         }
     }
@@ -416,6 +563,10 @@ class DownloadVideoFragment(private var resultItem: ResultItem? = null, private 
         resultItem = res
         val state = Bundle()
         state.putBoolean("updated", true)
+        if (disabledCutClicked) {
+            state.putBoolean("click_cut", true)
+            disabledCutClicked = false
+        }
         onViewCreated(requireView(),savedInstanceState = state)
     }
 
@@ -428,9 +579,11 @@ class DownloadVideoFragment(private var resultItem: ResultItem? = null, private 
         downloadItem.videoPreferences.audioFormatIDs.clear()
         downloadItem.videoPreferences.audioFormatIDs.addAll(arrayListOf(format.format_id))
         val formatCard = requireView().findViewById<MaterialCardView>(R.id.format_card_constraintLayout)
-        UiUtil.populateFormatCard(requireContext(), formatCard, downloadItem.format,
-            if(downloadItem.videoPreferences.removeAudio) listOf() else listOf(format)
+        val filesize = UiUtil.populateFormatCard(requireContext(), formatCard, downloadItem.format,
+            if(downloadItem.videoPreferences.removeAudio) listOf() else listOf(format),
+            showSize = downloadItem.downloadSections.isEmpty()
         )
+        formatViewModel.checkFreeSpace(filesize, downloadItem.downloadPath)
     }
 
     private var pathResultLauncher = registerForActivityResult(

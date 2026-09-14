@@ -1,21 +1,31 @@
 package com.deniscerri.ytdl
 
 import android.app.Application
+import android.content.Intent
 import android.os.Looper
 import android.widget.Toast
+import androidx.core.content.ContextCompat
 import androidx.core.content.edit
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
 import androidx.preference.PreferenceManager
+import com.deniscerri.ytdl.core.RuntimeManager
+import com.deniscerri.ytdl.core.models.ExecuteException
+import com.deniscerri.ytdl.database.DBManager
+import com.deniscerri.ytdl.database.repository.ObserveSourcesRepository
+import com.deniscerri.ytdl.services.BgUtilsPoTokenGeneratorService
+import com.deniscerri.ytdl.util.ApkInstallUtil
+import com.deniscerri.ytdl.util.BgUtilsPoTokenGeneratorUtil
+import com.deniscerri.ytdl.util.Extensions.hasReachedEnd
 import com.deniscerri.ytdl.util.NotificationUtil
+import com.deniscerri.ytdl.util.ObserveAlarmScheduler
 import com.deniscerri.ytdl.util.ThemeUtil
-import com.yausername.aria2c.Aria2c
-import com.yausername.ffmpeg.FFmpeg
-import com.yausername.youtubedl_android.YoutubeDL
-import com.yausername.youtubedl_android.YoutubeDLException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.util.*
 
 
 class App : Application() {
@@ -30,14 +40,21 @@ class App : Application() {
         applicationScope.launch((Dispatchers.IO)) {
             try {
                 createNotificationChannels()
-
                 initLibraries()
+
                 val appVer = sharedPreferences.getString("version", "")!!
                 if(appVer.isEmpty() || appVer != BuildConfig.VERSION_NAME){
                     sharedPreferences.edit(commit = true){
                         putString("version", BuildConfig.VERSION_NAME)
                     }
                 }
+
+                val db = DBManager.getInstance(this@App)
+                val scheduler = ObserveAlarmScheduler(this@App)
+                db.observeSourcesDao.getAllSources()
+                    .filter { it.status == ObserveSourcesRepository.SourceStatus.ACTIVE && !it.hasReachedEnd() }
+                    .forEach { scheduler.schedule(it) }         // idempotent: FLAG_UPDATE_CURRENT updates in place
+
             }catch (e: Exception){
                 Looper.prepare().runCatching {
                     Toast.makeText(this@App, e.message, Toast.LENGTH_SHORT).show()
@@ -47,11 +64,9 @@ class App : Application() {
         }
         ThemeUtil.init(this)
     }
-    @Throws(YoutubeDLException::class)
+    @Throws(ExecuteException::class)
     private fun initLibraries() {
-        YoutubeDL.getInstance().init(this)
-        FFmpeg.getInstance().init(this)
-        Aria2c.getInstance().init(this)
+        RuntimeManager.getInstance().init(this)
     }
 
     private fun setDefaultValues(){
@@ -64,6 +79,7 @@ class App : Application() {
             PreferenceManager.setDefaultValues(this, R.xml.processing_preferences, true)
             PreferenceManager.setDefaultValues(this, R.xml.folders_preference, true)
             PreferenceManager.setDefaultValues(this, R.xml.updating_preferences, true)
+            PreferenceManager.setDefaultValues(this, R.xml.advanced_preferences, true)
             sp.edit().putInt("spl", SPL).apply()
         }
 

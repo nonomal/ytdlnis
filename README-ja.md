@@ -20,16 +20,17 @@
 </div>
 
 <h3 align="center">
-	YTDLnisは、Android 6.0以降に対応した、yt-dlpを使用した無料かつオープンソースのビデオ/オーディオダウンローダーです。
+	YTDLnisは、Android 7.0以降に対応した、yt-dlpを使用した無料かつオープンソースのビデオ/オーディオダウンローダーです。
 </h3>
 <h4 align="center">
-	[Denis Çerriによって作成されました。現在はzaednasrによってメンテナンスされています]
+	Denis Çerriによって作成されました
 </h4>
 
 <div align="center">
 
 [![Github Download](https://custom-icon-badges.herokuapp.com/badge/Download-blue?style=for-the-badge&logo=download&logoColor=white)](https://github.com/deniscerri/ytdlnis/releases/latest)
-[![IzzyOnDroid Repo](https://custom-icon-badges.herokuapp.com/badge/IzzyOnDroid%20Repo-red?style=for-the-badge&logo=download&logoColor=white)](https://android.izzysoft.de/repo/apk/com.deniscerri.ytdl)
+[![F-Droid](https://custom-icon-badges.herokuapp.com/badge/FDroid-violet?style=for-the-badge&logo=download&logoColor=white)](https://f-droid.org/en/packages/com.deniscerri.ytdl)
+[![IzzyOnDroid Repo](https://custom-icon-badges.herokuapp.com/badge/IzzyOnDroid%20Repo-red?style=for-the-badge&logo=download&logoColor=white)](https://apt.izzysoft.de/packages/com.deniscerri.ytdl)
 [![UpToDown](https://custom-icon-badges.herokuapp.com/badge/UpToDown-green?style=for-the-badge&logo=download&logoColor=white)](https://ytdlnis.en.uptodown.com/android/download)
 
 ![CI](https://github.com/deniscerri/ytdlnis/actions/workflows/android.yml/badge.svg?branch=main&event=pull)
@@ -38,7 +39,8 @@
 [![Translation status](https://hosted.weblate.org/widgets/ytdlnis/-/svg-badge.svg)](https://hosted.weblate.org/engage/ytdlnis/?utm_source=widget) 
 [![community](https://img.shields.io/badge/Discord-YTDLnis-blueviolet?style=flat-square&logo=discord)](https://discord.gg/WW3KYWxAPm) 
 [![community](https://img.shields.io/badge/Telegram-YTDLnis-blue?style=flat-square&logo=telegram)](https://t.me/ytdlnis)
-[![community](https://img.shields.io/badge/Telegram-Updates-red?style=flat-square&logo=telegram)](https://t.me/ytdlnisupdates)
+[![website](https://img.shields.io/badge/Website-orange?style=flat-square&logo=youtube)](https://ytdlnis.org)
+[![community](https://img.shields.io/badge/Telegram-Updates-red?style=flat-square&logo=telegram)](https://t.me/ytdlnis_updates)
 
 
 ### 上記のリンクは、YTDLnisの唯一の信頼できるソースです。それ以外は私とは関係ありません。
@@ -129,7 +131,6 @@ TaskerやMacrodroidなどのアプリでインテントを使用して、ユー�
 
 <b>TYPE</b> -> audio, video, commandのいずれか <br/>
 <b>BACKGROUND</b> -> true, falseのいずれか。trueの場合、アプリはダウンロードカードを表示せず、バックグラウンドでダウンロードを実行 <br/>
-<b>COMMAND</b> -> 優先タイプがaudio/videoの場合、またはTYPE変数をそれらのいずれかに設定した場合、これは追加コマンド文字列に追加されます。タイプがcommandの場合、ここに書いたコマンド全体がダウンロードに使用されます <br/>
 
 ### Taskerでバックグラウンドでオーディオをダウンロードする例
 1. 送信インテントタスクを作成

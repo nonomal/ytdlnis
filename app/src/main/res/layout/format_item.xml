@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <com.google.android.material.card.MaterialCardView xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/format_card_constraintLayout"
     android:layout_width="match_parent"
     xmlns:android="http://schemas.android.com/apk/res/android"
@@ -28,6 +29,14 @@
             android:clickable="false"
             android:layout_height="55dp"
             android:gravity="center"
+
+            android:maxLines="1"
+            android:lines="1"
+            app:autoSizeTextType="uniform"
+            app:autoSizeMinTextSize="8sp"
+            app:autoSizeMaxTextSize="18sp"
+            app:autoSizeStepGranularity="1sp"
+
             android:minWidth="30dp"
             app:cornerRadius="10dp"
             app:layout_constraintBottom_toBottomOf="parent"
@@ -40,6 +49,7 @@
             android:visibility="gone"
             android:layout_width="0dp"
             android:indeterminate="true"
+            app:trackCornerRadius="20dp"
             app:trackColor="#000"
             android:layout_gravity="bottom"
             android:alpha="0.3"
@@ -57,6 +67,7 @@
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintHorizontal_bias="0.0"
+            app:layout_optimizationLevel="none"
             app:layout_constraintStart_toEndOf="@+id/container"
             app:layout_constraintTop_toTopOf="parent">
 
@@ -71,10 +82,35 @@
                 android:maxLines="2"
                 android:paddingHorizontal="10dp"
                 android:textSize="20sp"
+                app:layout_constrainedWidth="true"
                 app:layout_constraintEnd_toStartOf="@+id/format_id"
                 app:layout_constraintHorizontal_bias="0.0"
+                app:layout_constraintHorizontal_chainStyle="packed"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toTopOf="parent" />
+
+            <TextView
+                android:id="@+id/format_id"
+                android:layout_width="wrap_content"
+                android:minWidth="40dp"
+                android:layout_height="wrap_content"
+                android:clickable="false"
+                android:ellipsize="end"
+                android:gravity="end"
+                android:maxLines="1"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toEndOf="@id/format_note"
+                app:layout_constraintTop_toTopOf="@id/format_note"
+                app:layout_constraintBottom_toBottomOf="@id/format_note"
+                app:layout_constraintVertical_bias="0.0" />
+
+
+            <androidx.constraintlayout.widget.Barrier
+                android:id="@+id/formatnote_formatid"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                app:barrierDirection="bottom"
+                app:constraint_referenced_ids="format_note,format_id" />
 
 
             <RelativeLayout
@@ -117,6 +153,7 @@
                             android:maxLength="17"
                             android:minWidth="30dp"
                             android:paddingHorizontal="5dp"
+                            android:outlineProvider="none"
                             android:textStyle="bold"
                             app:cornerRadius="10dp"
                             app:drawableStartCompat="@drawable/ic_music_formatcard"
@@ -134,9 +171,10 @@
                             android:background="@drawable/rounded_corner"
                             android:backgroundTint="?attr/colorSecondary"
                             android:clickable="false"
-                            android:ellipsize="end"
                             android:gravity="center"
-                            android:maxLength="17"
+                            android:outlineProvider="none"
+                            android:maxWidth="90dp"
+                            android:maxLines="1"
                             android:minWidth="30dp"
                             android:paddingHorizontal="5dp"
                             android:textStyle="bold"
@@ -156,7 +194,27 @@
                             android:clickable="false"
                             android:gravity="center"
                             android:minWidth="30dp"
+                            android:outlineProvider="none"
                             android:paddingHorizontal="5dp"
+                            android:textStyle="bold"
+                            app:cornerRadius="10dp"
+                            app:layout_constraintBottom_toBottomOf="parent"
+                            app:layout_constraintStart_toStartOf="parent"
+                            app:layout_constraintTop_toTopOf="parent" />
+
+                        <TextView
+                            android:id="@+id/bitrate"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginEnd="5dp"
+                            android:background="@drawable/rounded_corner"
+                            android:backgroundTint="?attr/colorPrimaryInverse"
+                            android:textColor="@color/white"
+                            android:clickable="false"
+                            android:gravity="center"
+                            android:minWidth="30dp"
+                            android:paddingHorizontal="5dp"
+                            android:outlineProvider="none"
                             android:textStyle="bold"
                             app:cornerRadius="10dp"
                             app:layout_constraintBottom_toBottomOf="parent"
@@ -169,27 +227,6 @@
 
             </RelativeLayout>
 
-            <TextView
-                android:id="@+id/format_id"
-                android:layout_width="0dp"
-                android:minWidth="70dp"
-                android:layout_height="wrap_content"
-                android:layout_alignParentTop="true"
-                android:layout_alignParentEnd="true"
-                android:clickable="false"
-                android:ellipsize="end"
-                android:gravity="bottom|end"
-                android:maxWidth="70dp"
-                android:maxLines="1"
-                app:layout_constraintEnd_toEndOf="parent"
-                app:layout_constraintTop_toTopOf="parent" />
-
-            <androidx.constraintlayout.widget.Barrier
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:id="@+id/formatnote_formatid"
-                app:barrierDirection="bottom"
-                app:constraint_referenced_ids="format_note, format_id" />
 
 
         </androidx.constraintlayout.widget.ConstraintLayout>

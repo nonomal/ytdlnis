@@ -8,6 +8,7 @@ import androidx.preference.PreferenceManager
 import com.afollestad.materialdialogs.utils.MDUtil.getStringArray
 import com.deniscerri.ytdl.R
 import com.deniscerri.ytdl.database.models.Format
+import kotlin.math.min
 
 class FormatUtil(private var context: Context) {
     private val sharedPreferences : SharedPreferences = PreferenceManager.getDefaultSharedPreferences(context)
@@ -19,86 +20,159 @@ class FormatUtil(private var context: Context) {
     private val videoCodecPreference : String =  sharedPreferences.getString("video_codec", "").toString()
     private val audioContainerPreference : String = sharedPreferences.getString("audio_format", "").toString()
     private val videoContainerPreference : String = sharedPreferences.getString("video_format", "").toString()
-    @SuppressLint("RestrictedApi")
-    private val videoResolutionOrder = context.getStringArray(R.array.video_formats_values).filter { it.contains("_") }.map{ it.split("_")[0].dropLast(1) }.reversed()
-    private val preferSmallerFormats = sharedPreferences.getBoolean("prefer_smaller_formats", false)
+    private val videoResolutionOrder = context.getStringArray(R.array.video_formats_values)
+                                            .filter { it.contains("_") }
+                                            .map{ it.split("_")[0].dropLast(1) }.toMutableList().apply {
+                                                this.reverse()
+                                            }
 
     @SuppressLint("RestrictedApi")
-    fun getAudioFormatImportance() : Set<String> {
-        val itemValues = context.getStringArray(R.array.format_importance_audio_values).toSet()
-        val orderPreferences = sharedPreferences.getString("format_importance_audio", itemValues.joinToString(","))!!.split(",").toMutableSet()
-        if (preferSmallerFormats) {
-            orderPreferences.add("smallsize")
+    fun getAudioFormatImportance(forVideoDownload: Boolean) : List<String> {
+        val preferredFormatSize = sharedPreferences.getString("preferred_format_size", "")
+
+        if (sharedPreferences.getBoolean("use_format_sorting", false)) {
+            val itemValues = context.getStringArray(R.array.format_importance_audio_values).toMutableList()
+            val orderPreferences = sharedPreferences.getString("format_importance_audio", itemValues.joinToString(","))!!.split(",").toMutableList()
+
+            if (preferredFormatSize == "smallest") {
+                orderPreferences.remove("file_size")
+                orderPreferences.add(0,"smallsize")
+            }
+
+            if(!forVideoDownload) {
+                val preferContainerOverCodec = sharedPreferences.getBoolean("prefer_container_over_codec_audio", false)
+                if(preferContainerOverCodec) {
+                    orderPreferences.remove("codec")
+                }
+            }
+
+            return orderPreferences
+        }else {
+            val formatImportance = mutableListOf("id", "language", "codec", "container")
+            if (preferredFormatSize == "smallest") {
+                formatImportance.add("smallsize")
+            }else if (preferredFormatSize == "largest") {
+                formatImportance.add("file_size")
+            }
+
+            if(!forVideoDownload) {
+                val preferContainerOverCodec = sharedPreferences.getBoolean("prefer_container_over_codec_audio", false)
+                if(preferContainerOverCodec) {
+                    formatImportance.remove("codec")
+                }
+            }
+
+            val preferDRC = sharedPreferences.getBoolean("prefer_drc_audio", false)
+            if (preferDRC) {
+                formatImportance.add(0,"prefer_drc")
+            }
+
+            return formatImportance
         }
-
-        return orderPreferences
     }
 
     @SuppressLint("RestrictedApi")
-    fun getVideoFormatImportance() : Set<String> {
-        val itemValues = context.getStringArray(R.array.format_importance_video_values).toSet()
-        val orderPreferences = sharedPreferences.getString("format_importance_video", itemValues.joinToString(","))!!.split(",").toMutableSet()
-        if (preferSmallerFormats) {
-            orderPreferences.add("smallsize")
-        }
+    fun getVideoFormatImportance() : List<String> {
+        val preferredFormatSize = sharedPreferences.getString("preferred_format_size", "")
 
-        return orderPreferences
+        if (sharedPreferences.getBoolean("use_format_sorting", false)) {
+            val itemValues = context.getStringArray(R.array.format_importance_video_values).toList()
+            val orderPreferences = sharedPreferences.getString("format_importance_video", itemValues.joinToString(","))!!.split(",").toMutableList()
+
+            if (preferredFormatSize == "smallest") {
+                orderPreferences.remove("file_size")
+                orderPreferences.add("smallsize")
+            }
+
+            return orderPreferences
+        }else {
+            val formatImportance = mutableListOf("id","resolution", "codec", "container")
+            if (preferredFormatSize == "smallest") {
+                formatImportance.add("smallsize")
+            }else if (preferredFormatSize == "largest") {
+                formatImportance.add("file_size")
+            }
+
+            return formatImportance
+        }
     }
 
 
     @SuppressLint("RestrictedApi")
-    fun sortAudioFormats(formats: List<Format>) : List<Format> {
-        val orderPreferences = getAudioFormatImportance()
+    fun sortAudioFormats(formats: List<Format>, forVideoDownload: Boolean = false) : List<Format> {
+        val orderPreferences = getAudioFormatImportance(forVideoDownload)
 
-        val fieldSorter: Comparator<Format> = object : Comparator<Format> {
-            override fun compare(a: Format, b: Format): Int {
-                for (order in orderPreferences) {
-                    val comparison = when (order) {
-                        "smallsize" -> {
-                            (a.filesize).compareTo(b.filesize)
-                        }
+        val comparator = Comparator<Format> { a, b ->
+            if ("prefer_drc" in orderPreferences) {
+                val comparison = (b.format_note.contains("drc", ignoreCase = true)).compareTo(
+                    a.format_note.contains("drc", ignoreCase = true)
+                )
 
-                        "id" -> {
+                if (comparison != 0) return@Comparator comparison
+            }
+
+            for (order in orderPreferences) {
+                val comparison = when (order) {
+                    "smallsize" -> {
+                        (a.filesize).compareTo(b.filesize)
+                    }
+                    "file_size" -> {
+                        b.filesize.compareTo(a.filesize)
+                    }
+                    "id" -> {
+                        if (audioFormatIDPreference.isNotEmpty()) {
                             (audioFormatIDPreference.contains(b.format_id)).compareTo(
                                 audioFormatIDPreference.contains(a.format_id)
                             )
-                        }
+                        } else 0
+                    }
+                    "language" -> {
+                        val defaults = listOf("original", "default")
 
-                        "language" -> {
-                            if (audioLanguagePreference.isBlank()) {
-                                0
-                            } else {
-                                (b.lang?.contains(audioLanguagePreference) == true).compareTo(
-                                    a.lang?.contains(
-                                        audioLanguagePreference
-                                    ) == true
+                        if (audioLanguagePreference.isBlank()) {
+                            (defaults.any { b.format_note.contains(it, true) }).compareTo(
+                                defaults.any { a.format_note.contains(it, true) }
+                            )
+                        } else {
+                            val res = (b.lang?.contains(audioLanguagePreference) == true).compareTo(
+                                a.lang?.contains(
+                                    audioLanguagePreference
+                                ) == true
+                            )
+                            if(res == 0) {
+                                (defaults.any { b.format_note.contains(it, true) }).compareTo(
+                                    defaults.any { a.format_note.contains(it, true) }
                                 )
+                            }else {
+                                res
                             }
                         }
+                    }
+                    "codec" -> {
+                        if (audioCodecPreference.isNotBlank()) {
+                            ("^(${audioCodecPreference}).*$".toRegex(RegexOption.IGNORE_CASE)
+                                .matches(b.acodec))
+                                .compareTo(
+                                    "^(${audioCodecPreference}).*$".toRegex(RegexOption.IGNORE_CASE)
+                                        .matches(a.acodec)
+                                )
+                        } else 0
+                    }
 
-                        "codec" -> {
-                            ("^(${audioCodecPreference}).+$".toRegex(RegexOption.IGNORE_CASE)
-                                    .matches(b.acodec))
-                                    .compareTo(
-                                        "^(${audioCodecPreference}).+$".toRegex(RegexOption.IGNORE_CASE)
-                                            .matches(a.acodec)
-                                    )
-                        }
-
-                        "container" -> {
+                    "container" -> {
+                        if (audioContainerPreference.isNotBlank()) {
                             (audioContainerPreference == b.container).compareTo(
                                 audioContainerPreference == a.container
                             )
-                        }
-
-                        else -> 0
+                        } else 0
                     }
-                    if (comparison != 0) return comparison
+                    else -> 0
                 }
-                return 0
+                if (comparison != 0) return@Comparator comparison
             }
+            return@Comparator 0
         }
-        return formats.sortedWith(fieldSorter)
+        return formats.sortedWith(comparator)
     }
 
     @SuppressLint("RestrictedApi")
@@ -113,18 +187,35 @@ class FormatUtil(private var context: Context) {
                             val result = a.filesize.compareTo(b.filesize)
                             result
                         }
+                        "file_size" -> {
+                            val result = b.filesize.compareTo(a.filesize)
+                            result
+                        }
                         "id" -> {
-                            videoFormatIDPreference.contains(b.format_id).compareTo(videoFormatIDPreference.contains(a.format_id))
+                            if (videoFormatIDPreference.isEmpty()) {
+                                0
+                            }else {
+                                videoFormatIDPreference.contains(b.format_id).compareTo(videoFormatIDPreference.contains(a.format_id))
+                            }
                         }
                         "codec" -> {
-                           "^(${videoCodecPreference}).+$".toRegex(RegexOption.IGNORE_CASE).matches(b.vcodec.uppercase())
-                                .compareTo("^(${videoCodecPreference}).+$".toRegex(RegexOption.IGNORE_CASE).matches(a.vcodec.uppercase()))
+                            if (videoCodecPreference.isBlank()) {
+                                0
+                            }else {
+                                val first = videoCodecPreference.toRegex(RegexOption.IGNORE_CASE).containsMatchIn(b.vcodec.uppercase())
+                                val second = videoCodecPreference.toRegex(RegexOption.IGNORE_CASE).containsMatchIn(a.vcodec.uppercase())
+                                first.compareTo(second)
+                            }
                         }
                         "resolution" -> {
                             when (videoQualityPreference) {
                                 "worst" -> {
-                                    b.format_note.contains("worst", ignoreCase = true)
+                                    val containsWorst = b.format_note.contains("worst", ignoreCase = true)
                                         .compareTo(a.format_note.contains("worst", ignoreCase = true))
+
+                                    val worstFilesize = a.filesize.compareTo(b.filesize)
+
+                                    min(containsWorst, worstFilesize)
                                 }
                                 "best" -> {
                                     b.format_note.contains("best", ignoreCase = true)
@@ -150,8 +241,12 @@ class FormatUtil(private var context: Context) {
                             (b.acodec == "none" || b.acodec == "").compareTo(a.acodec == "none" || a.acodec == "")
                         }
                         "container" -> {
-                            videoContainerPreference.equals(b.container, ignoreCase = true)
-                                .compareTo(videoContainerPreference.equals(a.container, ignoreCase = true))
+                            if (videoContainerPreference.isBlank()) {
+                                0
+                            }else {
+                                videoContainerPreference.equals(b.container, ignoreCase = true)
+                                    .compareTo(videoContainerPreference.equals(a.container, ignoreCase = true))
+                            }
                         }
                         else -> 0
                     }

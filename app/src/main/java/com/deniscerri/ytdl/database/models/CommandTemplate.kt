@@ -17,5 +17,10 @@ data class CommandTemplate(
     @ColumnInfo(defaultValue = "1")
     var useAsExtraCommandAudio: Boolean,
     @ColumnInfo(defaultValue = "1")
-    var useAsExtraCommandVideo: Boolean
+    var useAsExtraCommandVideo: Boolean,
+    @ColumnInfo(defaultValue = "0")
+    var useAsExtraCommandDataFetching: Boolean,
+    @ColumnInfo(defaultValue = "0")
+    var preferredCommandTemplate : Boolean = false,
+    var urlRegex: MutableList<String> = mutableListOf()
 )

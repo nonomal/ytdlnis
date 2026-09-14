@@ -34,7 +34,6 @@
         android:icon="@drawable/ic_nightly"
         app:showAsAction="always"/>
 
-
     <item
         android:id="@+id/more"
         android:title="@string/more"

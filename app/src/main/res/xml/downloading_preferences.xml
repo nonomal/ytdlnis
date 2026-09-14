@@ -26,7 +26,7 @@
             android:icon="@drawable/ic_speed"
             android:key="quick_download"
             app:summary="@string/quick_download_summary"
-            app:title="@string/quick_download" />
+            app:title="@string/quick_download_title" />
         
         <ListPreference
             android:defaultValue="url_type"
@@ -36,6 +36,13 @@
             app:key="prevent_duplicate_downloads"
             app:useSimpleSummaryProvider="true"
             app:title="@string/prevent_duplicate_downloads" />
+
+        <Preference
+            android:defaultValue="0-0"
+            android:icon="@drawable/baseline_timer_24"
+            app:key="download_delay"
+            android:summary="@string/download_delay_summary"
+            app:title="@string/download_delay" />
 
         <Preference
             android:defaultValue=""
@@ -97,7 +104,7 @@
             app:isPreferenceVisible="false" />
 
         <SeekBarPreference
-            android:defaultValue="3"
+            android:defaultValue="1"
             android:icon="@drawable/ic_lines"
             android:max="25"
             app:key="concurrent_fragments"
@@ -128,6 +135,12 @@
             app:summary="@string/buffer_size_summary"
             app:title="@string/buffer_size" />
 
+        <EditTextPreference
+            android:icon="@drawable/ic_clock"
+            app:key="socket_timeout"
+            android:summary="@string/socket_timeout_description"
+            app:title="@string/socket_timeout"/>
+
         <SwitchPreferenceCompat
             android:widgetLayout="@layout/preferece_material_switch"
             app:defaultValue="false"
@@ -135,7 +148,7 @@
             android:key="aria2"
             app:summary="@string/aria2_summary"
             android:disableDependentsState="true"
-            app:title="Aria2" />
+            app:title="aria2c" />
 
         <SwitchPreferenceCompat
             android:widgetLayout="@layout/preferece_material_switch"
@@ -187,7 +200,6 @@
             app:title="@string/use_scheduler" />
 
         <Preference
-            android:dependency="use_scheduler"
             android:icon="@drawable/ic_start"
             app:title="@string/start"
             app:defaultValue="00:00"
@@ -196,7 +208,6 @@
         />
 
         <Preference
-            android:dependency="use_scheduler"
             app:title="@string/end"
             android:icon="@drawable/ic_end"
             app:defaultValue="05:00"
@@ -207,13 +218,14 @@
 
     <Preference
         app:defaultValue=""
-        android:key="use_header"
+        android:key="useragent_header"
         app:isPreferenceVisible="false" />
 
     <Preference
-        app:defaultValue=""
-        android:key="useragent_header"
-        app:isPreferenceVisible="false" />
+        app:icon="@drawable/baseline_reset_tv_24"
+        app:key="reset_preferences"
+        android:summary="@string/reset_preferences_in_screen"
+        app:title="@string/reset" />
 
 
 </PreferenceScreen>

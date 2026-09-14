@@ -13,7 +13,8 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
-import android.widget.*
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.content.res.AppCompatResources
@@ -22,8 +23,8 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.preference.PreferenceManager
-import com.afollestad.materialdialogs.utils.MDUtil.getStringArray
 import com.deniscerri.ytdl.R
+import com.deniscerri.ytdl.database.enums.DownloadType
 import com.deniscerri.ytdl.database.models.CommandTemplate
 import com.deniscerri.ytdl.database.models.DownloadItem
 import com.deniscerri.ytdl.database.models.Format
@@ -55,6 +56,7 @@ class DownloadCommandFragment(private val resultItem: ResultItem? = null, privat
 
     lateinit var downloadItem: DownloadItem
 
+    @SuppressLint("RestrictedApi")
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
@@ -65,7 +67,7 @@ class DownloadCommandFragment(private val resultItem: ResultItem? = null, privat
         downloadViewModel = ViewModelProvider(this)[DownloadViewModel::class.java]
         commandTemplateViewModel = ViewModelProvider(this)[CommandTemplateViewModel::class.java]
         preferences = PreferenceManager.getDefaultSharedPreferences(requireContext())
-        shownFields = preferences.getStringSet("modify_download_card", requireContext().getStringArray(R.array.modify_download_card_values).toSet())!!.toList()
+        shownFields = preferences.getStringSet("modify_download_card", requireContext().resources.getStringArray(R.array.modify_download_card_values).toSet())!!.toList()
         return fragmentView
     }
 
@@ -77,22 +79,22 @@ class DownloadCommandFragment(private val resultItem: ResultItem? = null, privat
             downloadItem = withContext(Dispatchers.IO){
                 if (currentDownloadItem != null){
                     currentDownloadItem?.apply {
-                        if (type != DownloadViewModel.Type.command){
-                            type = DownloadViewModel.Type.command
+                        if (type != DownloadType.command){
+                            type = DownloadType.command
                         }
                     }
 
                     val string = Gson().toJson(currentDownloadItem, DownloadItem::class.java)
                     Gson().fromJson(string, DownloadItem::class.java)
                 }else{
-                    downloadViewModel.createDownloadItemFromResult(resultItem, url, DownloadViewModel.Type.command)
+                    downloadViewModel.createDownloadItemFromResult(resultItem, url, DownloadType.command)
                 }
             }
 
             preferences.edit().putString("lastCommandTemplateUsed", downloadItem.format.format_note).apply()
 
             if (!Patterns.WEB_URL.matcher(downloadItem.url).matches() && downloadItem.url.endsWith(".txt")){
-                downloadItem.format = downloadViewModel.generateCommandFormat(CommandTemplate(0,"txt", "-a \"${downloadItem.url}\"", useAsExtraCommand = false, useAsExtraCommandAudio = false, useAsExtraCommandVideo = false))
+                downloadItem.format = downloadViewModel.generateCommandFormat(CommandTemplate(0,"txt", "-a \"${downloadItem.url}\"", useAsExtraCommand = false, useAsExtraCommandAudio = false, useAsExtraCommandVideo = false, useAsExtraCommandDataFetching = false))
                 downloadItem.url = ""
             }
 
@@ -129,12 +131,6 @@ class DownloadCommandFragment(private val resultItem: ResultItem? = null, privat
                 })
 
                 chosenCommandView.editText!!.setSelection(chosenCommandView.editText!!.text.length)
-                val imm = context?.getSystemService(AppCompatActivity.INPUT_METHOD_SERVICE) as InputMethodManager
-                chosenCommandView.editText!!.postDelayed({
-                    chosenCommandView.editText!!.requestFocus()
-                    imm.showSoftInput(chosenCommandView.editText, 0)
-                }, 300)
-
                 chosenCommandView.setEndIconOnClickListener {
                     if(chosenCommandView.editText!!.text.isEmpty()){
                         val clipboard: ClipboardManager =
@@ -248,7 +244,7 @@ class DownloadCommandFragment(private val resultItem: ResultItem? = null, privat
                                         0,
                                         "",
                                         chosenCommandView.editText!!.text.toString(),
-                                        useAsExtraCommand = false, useAsExtraCommandAudio = false, useAsExtraCommandVideo = false
+                                        useAsExtraCommand = false, useAsExtraCommandAudio = false, useAsExtraCommandVideo = false, useAsExtraCommandDataFetching = false
                                     )
                                 UiUtil.showCommandTemplateCreationOrUpdatingSheet(
                                     current, requireActivity(), viewLifecycleOwner, commandTemplateViewModel,

@@ -10,16 +10,17 @@
 </div>
 
 <h3 align="center">
-YTDLnis es un descargador de audio/video gratuito y de código abierto que utiliza yt-dlp para Android 6.0 y superior.
+YTDLnis es un descargador de audio/video gratuito y de código abierto que utiliza yt-dlp para Android 7.0 y superior.
 </h3>
 <h4 align="center">
-	[Creado por Denis Çerri. Actualmente mantenido por zaednasr]
+	Creado por Denis Çerri
 </h4>
 
 <div align="center">
 
 [![Github Download](https://custom-icon-badges.herokuapp.com/badge/Download-blue?style=for-the-badge&logo=download&logoColor=white)](https://github.com/deniscerri/ytdlnis/releases/latest)
-[![IzzyOnDroid Repo](https://custom-icon-badges.herokuapp.com/badge/IzzyOnDroid%20Repo-red?style=for-the-badge&logo=download&logoColor=white)](https://android.izzysoft.de/repo/apk/com.deniscerri.ytdl)
+[![F-Droid](https://custom-icon-badges.herokuapp.com/badge/FDroid-violet?style=for-the-badge&logo=download&logoColor=white)](https://f-droid.org/en/packages/com.deniscerri.ytdl)
+[![IzzyOnDroid Repo](https://custom-icon-badges.herokuapp.com/badge/IzzyOnDroid%20Repo-red?style=for-the-badge&logo=download&logoColor=white)](https://apt.izzysoft.de/packages/com.deniscerri.ytdl)
 [![UpToDown](https://custom-icon-badges.herokuapp.com/badge/UpToDown-green?style=for-the-badge&logo=download&logoColor=white)](https://ytdlnis.en.uptodown.com/android/download)
 
 ![CI](https://github.com/deniscerri/ytdlnis/actions/workflows/android.yml/badge.svg?branch=main&event=pull)
@@ -28,7 +29,8 @@ YTDLnis es un descargador de audio/video gratuito y de código abierto que utili
 [![Translation status](https://hosted.weblate.org/widgets/ytdlnis/-/svg-badge.svg)](https://hosted.weblate.org/engage/ytdlnis/?utm_source=widget) 
 [![community](https://img.shields.io/badge/Discord-YTDLnis-blueviolet?style=flat-square&logo=discord)](https://discord.gg/WW3KYWxAPm) 
 [![community](https://img.shields.io/badge/Telegram-YTDLnis-blue?style=flat-square&logo=telegram)](https://t.me/ytdlnis)
-[![community](https://img.shields.io/badge/Telegram-Updates-red?style=flat-square&logo=telegram)](https://t.me/ytdlnisupdates)
+[![website](https://img.shields.io/badge/Website-orange?style=flat-square&logo=youtube)](https://ytdlnis.org)
+[![community](https://img.shields.io/badge/Telegram-Updates-red?style=flat-square&logo=telegram)](https://t.me/ytdlnis_updates)
 
 
 ### Los enlaces anteriores son las únicas fuentes confiables de YTDLnis. Todo lo demás no está relacionado.
@@ -119,7 +121,6 @@ Variables aceptadas:
 
 <b>TIPO</b> -> puede ser: audio, video, comando <br/>
 <b>BACKGROUND</b> -> puede ser: verdadero, falso.  Si es cierto, la aplicación no mostrará la tarjeta de descarga pase lo que pase y ejecutará la descarga en segundo plano. <br/>
-<b>COMMAND</b> -> Si su tipo preferido es audio/video o configura la variable TIPO como uno de ellos, esto se agregará a su cadena de Comandos adicionales.  Si el tipo es comando, todo el comando que escribió aquí se usará para la descarga. <br/>
 
 ### Tasker Ejemplo de descarga de un audio en segundo plano
 1. Crear tarea de intención de envío
@@ -152,4 +153,3 @@ A excepción del código fuente bajo la licencia GPLv3, todas las demás partes 
 - [decipher3114](https://github.com/decipher3114) por hacer que el ícono de la aplicación esté disponible
 
 y muchos otros extraños en foros de Internet.
-

@@ -6,10 +6,8 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.LayoutInflater
-import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
 import android.widget.ImageView
 import android.widget.PopupMenu
 import android.widget.TextView
@@ -20,11 +18,9 @@ import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.deniscerri.ytdl.R
+import com.deniscerri.ytdl.database.enums.DownloadType
 import com.deniscerri.ytdl.database.models.AlreadyExistsItem
-import com.deniscerri.ytdl.database.models.DownloadItem
-import com.deniscerri.ytdl.database.viewmodel.DownloadViewModel
 import com.deniscerri.ytdl.util.Extensions.loadThumbnail
-import com.deniscerri.ytdl.util.Extensions.popup
 import com.deniscerri.ytdl.util.FileUtil
 import com.deniscerri.ytdl.util.UiUtil
 import com.google.android.material.card.MaterialCardView
@@ -83,10 +79,10 @@ class AlreadyExistsAdapter(onItemClickListener: OnItemClickListener, activity: A
         //DOWNLOAD TYPE -----------------------------
         val type = card.findViewById<TextView>(R.id.download_type)
         when(item.type){
-            DownloadViewModel.Type.audio -> type.setCompoundDrawablesRelativeWithIntrinsicBounds(
+            DownloadType.audio -> type.setCompoundDrawablesRelativeWithIntrinsicBounds(
                 R.drawable.ic_music_formatcard, 0,0,0
             )
-            DownloadViewModel.Type.video -> type.setCompoundDrawablesRelativeWithIntrinsicBounds(
+            DownloadType.video -> type.setCompoundDrawablesRelativeWithIntrinsicBounds(
                 R.drawable.ic_video_formatcard, 0,0,0
             )
             else -> type.setCompoundDrawablesRelativeWithIntrinsicBounds(

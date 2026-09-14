@@ -6,7 +6,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteDatabase.OPEN_READONLY
-import android.os.Environment
+import android.net.Uri
 import android.util.Log
 import android.webkit.CookieManager
 import androidx.lifecycle.AndroidViewModel
@@ -17,10 +17,11 @@ import com.deniscerri.ytdl.BuildConfig
 import com.deniscerri.ytdl.database.DBManager
 import com.deniscerri.ytdl.database.models.CookieItem
 import com.deniscerri.ytdl.database.repository.CookieRepository
-import com.deniscerri.ytdl.ui.more.WebViewActivity
+import com.deniscerri.ytdl.ui.more.cookies.WebViewActivity
 import com.deniscerri.ytdl.util.FileUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.util.Date
 
@@ -53,16 +54,32 @@ class CookieViewModel(private val application: Application) : AndroidViewModel(a
         return repository.getAll()
     }
 
-    fun getByURL(url: String) : CookieItem? {
+    private fun getByURL(url: String) : CookieItem? {
         return repository.getByURL(url)
     }
 
+    private fun getByURLDescription(url: String, description: String): CookieItem? {
+        return repository.getByURLDescription(url, description)
+    }
+
     suspend fun insert(item: CookieItem) : Long {
+        val exists = getByURLDescription(item.url, item.description)
+        if (exists != null) {
+            exists.content = item.content
+            repository.update(exists)
+            return exists.id
+        }
+
         return repository.insert(item)
     }
 
     fun delete(item: CookieItem) = viewModelScope.launch(Dispatchers.IO) {
         repository.delete(item)
+        updateCookiesFile()
+    }
+
+    suspend fun changeCookieEnabledState(itemId: Long, isEnabled: Boolean) {
+        repository.changeCookieEnabledState(itemId, isEnabled)
         updateCookiesFile()
     }
 
@@ -85,10 +102,9 @@ class CookieViewModel(private val application: Application) : AndroidViewModel(a
 
     @SuppressLint("SdCardPath")
     fun getCookiesFromDB(url: String) : Result<String> = kotlin.runCatching {
-        CookieManager.getInstance().run {
-            if (!hasCookies()) throw Exception("There is no cookies in the database!")
-            flush()
-        }
+        CookieManager.getInstance().flush()
+
+        val targetHost = Uri.parse(url).host ?: throw Exception("Invalid URL or domain!")
         val dbPath = File("/data/data/${BuildConfig.APPLICATION_ID}/").walkTopDown().find { it.name == "Cookies" }
             ?: throw Exception("Cookies File not found!")
 
@@ -96,10 +112,16 @@ class CookieViewModel(private val application: Application) : AndroidViewModel(a
             dbPath.absolutePath, null, OPEN_READONLY
         )
 
-
         val cookieList = mutableListOf<WebViewActivity.CookieItem>()
+
+        val selection = "${CookieObject.HOST} LIKE ? OR ${CookieObject.HOST} LIKE ?"
+        val selectionArgs = arrayOf(
+            "%$targetHost",          // Matches 'example.com' or '.example.com'
+            "%${targetHost.removePrefix("www.")}" // Matches root domain if 'www.example.com' passed
+        )
+
         db.query(
-            "cookies", projection, null, null, null, null, null
+            "cookies", projection, selection, selectionArgs, null, null, null
         ).run {
             while (moveToNext()) {
                 val expiry = getLong(getColumnIndexOrThrow(CookieObject.EXPIRY))
@@ -134,7 +156,7 @@ class CookieViewModel(private val application: Application) : AndroidViewModel(a
     }
 
     fun updateCookiesFile() = viewModelScope.launch(Dispatchers.IO) {
-        val cookies = repository.getAll()
+        val cookies = repository.getAllEnabled()
         val cookieTXT = StringBuilder(cookieHeader)
         FileUtil.getCookieFile(application, true){ c ->
             val cookieFile = File(c)
@@ -147,6 +169,9 @@ class CookieViewModel(private val application: Application) : AndroidViewModel(a
             cookieFile.apply { writeText(cookieTXT.toString()) }
         }
 
+        //clear info jsons after updating cookies
+        val infoJsonPath = FileUtil.getInfoJsonPath(application)
+        File(infoJsonPath).deleteRecursively()
     }
 
     suspend fun importFromClipboard() {
@@ -160,8 +185,10 @@ class CookieViewModel(private val application: Application) : AndroidViewModel(a
                 clip = clip.removePrefix(cookieHeader)
                 val cookie = CookieItem(
                     0,
+                    "",
+                    clip.toString(),
                     "Cookie Import at [${Date()}]",
-                    clip.toString()
+                    true
                 )
                 insert(cookie)
                 updateCookiesFile()
@@ -188,15 +215,25 @@ class CookieViewModel(private val application: Application) : AndroidViewModel(a
         }
     }
 
-    fun exportToFile(exported: (File?) -> Unit) {
+    fun exportToFile(exported: (File?) -> Unit) = viewModelScope.launch(Dispatchers.IO) {
         try{
             FileUtil.getCookieFile(application, true){ c ->
                 val cookieFile = File(c)
                 if (!cookieFile.exists()) updateCookiesFile()
 
-                val downloads = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).absolutePath + File.separator + "YTDLnis_Cookies.txt")
-                val file = cookieFile.copyTo(downloads, true)
-                exported(file)
+                val dir = File("${FileUtil.getCachePath(application)}/Cookie Backups")
+                dir.mkdirs()
+                val saveFile = File("${dir.absolutePath}/YTDLnis_Cookies.txt")
+
+                saveFile.delete()
+                saveFile.createNewFile()
+                cookieFile.copyTo(saveFile, true)
+
+                val res = runBlocking {
+                    FileUtil.moveFile(saveFile.parentFile!!, application, FileUtil.getDefaultApplicationPath(), false) {}
+                }
+
+                exported(File(res[0]))
             }
         }catch (e: Exception){
             e.printStackTrace()

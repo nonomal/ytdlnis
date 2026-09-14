@@ -1,6 +1,5 @@
 package com.deniscerri.ytdl.ui.adapter
 
-import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
@@ -12,16 +11,12 @@ import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.content.ContextCompat
-import androidx.core.view.isVisible
 import androidx.recyclerview.widget.AsyncDifferConfig
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.deniscerri.ytdl.R
-import com.deniscerri.ytdl.database.models.CommandTemplate
 import com.deniscerri.ytdl.database.models.GithubRelease
-import com.deniscerri.ytdl.util.Extensions.popup
-import com.google.android.material.card.MaterialCardView
 import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
 import io.noties.markwon.AbstractMarkwonPlugin
@@ -80,7 +75,7 @@ class ChangelogAdapter(activity: Activity) : ListAdapter<GithubRelease?, Changel
         val assetGroup = card.findViewById<ChipGroup>(R.id.assets)
         assetGroup.removeAllViews()
         it.assets.forEachIndexed { idx, c ->
-            val tmp = activity.layoutInflater.inflate(R.layout.filter_chip, assetGroup, false) as Chip
+            val tmp = activity.layoutInflater.inflate(R.layout.suggestion_chip, assetGroup, false) as Chip
             tmp.isCheckable = false
             tmp.layoutParams = layoutParams
             tmp.text = c.name

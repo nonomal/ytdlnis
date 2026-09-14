@@ -7,8 +7,10 @@ import android.content.res.Resources
 import android.os.Build
 import android.os.Parcelable
 import android.util.DisplayMetrics
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
+import androidx.lifecycle.MediatorLiveData
 import androidx.lifecycle.asLiveData
 import androidx.lifecycle.viewModelScope
 import androidx.paging.PagingData
@@ -19,9 +21,11 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import com.deniscerri.ytdl.App
 import com.deniscerri.ytdl.R
+import com.deniscerri.ytdl.core.RuntimeManager
 import com.deniscerri.ytdl.database.DBManager
 import com.deniscerri.ytdl.database.dao.CommandTemplateDao
 import com.deniscerri.ytdl.database.dao.DownloadDao
+import com.deniscerri.ytdl.database.enums.DownloadType
 import com.deniscerri.ytdl.database.models.AudioPreferences
 import com.deniscerri.ytdl.database.models.CommandTemplate
 import com.deniscerri.ytdl.database.models.DownloadItem
@@ -35,19 +39,25 @@ import com.deniscerri.ytdl.database.repository.DownloadRepository
 import com.deniscerri.ytdl.database.repository.HistoryRepository
 import com.deniscerri.ytdl.database.repository.ResultRepository
 import com.deniscerri.ytdl.ui.downloadcard.MultipleItemFormatTuple
+import com.deniscerri.ytdl.util.Extensions.needsDataUpdating
 import com.deniscerri.ytdl.util.Extensions.toListString
 import com.deniscerri.ytdl.util.FileUtil
 import com.deniscerri.ytdl.util.FormatUtil
-import com.deniscerri.ytdl.util.extractors.YTDLPUtil
-import com.deniscerri.ytdl.work.AlarmScheduler
-import com.deniscerri.ytdl.work.UpdateMultipleDownloadsFormatsWorker
+import com.deniscerri.ytdl.util.NotificationUtil
+import com.deniscerri.ytdl.util.extractors.ytdlp.YTDLPUtil
+import com.deniscerri.ytdl.util.AlarmScheduler
+import com.deniscerri.ytdl.util.DownloadQueueUtil
+import com.deniscerri.ytdl.work.background.UpdateMultipleDownloadsDataWorker
+import com.deniscerri.ytdl.work.background.UpdateMultipleDownloadsFormatsWorker
 import com.google.gson.Gson
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -62,25 +72,33 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
     private val sharedPreferences: SharedPreferences
     private val commandTemplateDao: CommandTemplateDao
     private val formatUtil = FormatUtil(application)
-    private val ytdlpUtil = YTDLPUtil(application)
+    private val notificationUtil = NotificationUtil(application)
+    private val ytdlpUtil: YTDLPUtil
     private val resources : Resources
 
     val allDownloads : Flow<PagingData<DownloadItem>>
     val queuedDownloads : Flow<PagingData<DownloadItemSimple>>
     val activeDownloads : Flow<List<DownloadItem>>
-    val processingDownloads : Flow<List<DownloadItemConfigureMultiple>>
+    val activePausedDownloads : Flow<List<DownloadItem>>
     val cancelledDownloads : Flow<PagingData<DownloadItemSimple>>
     val erroredDownloads : Flow<PagingData<DownloadItemSimple>>
     val savedDownloads : Flow<PagingData<DownloadItemSimple>>
     val scheduledDownloads : Flow<PagingData<DownloadItemSimple>>
 
     val activeDownloadsCount : Flow<Int>
+    val activePausedDownloadsCount : Flow<Int>
     val queuedDownloadsCount : Flow<Int>
-    val activeQueuedDownloadsCount : Flow<Int>
+    val pausedDownloadsCount : Flow<Int>
     val cancelledDownloadsCount : Flow<Int>
     val erroredDownloadsCount : Flow<Int>
     val savedDownloadsCount : Flow<Int>
     val scheduledDownloadsCount : Flow<Int>
+    val pausedAllDownloads = MediatorLiveData(PausedAllDownloadsState.HIDDEN)
+    private val pausedAllDownloadsFlow : Flow<PausedAllDownloadsState>
+    private var isPausingResuming = false
+    enum class PausedAllDownloadsState {
+        PAUSE, RESUME, PROCESSING, HIDDEN
+    }
 
     @Parcelize
     data class AlreadyExistsIDs(
@@ -92,16 +110,12 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
         mutableListOf()
     )
 
-    private var extraCommandsForAudio: String = ""
-    private var extraCommandsForVideo: String = ""
+    private var extraCommandsForAudio: List<CommandTemplate> = listOf()
+    private var extraCommandsForVideo: List<CommandTemplate> = listOf()
 
     private val dao: DownloadDao
     private val historyRepository: HistoryRepository
     private val resultRepository: ResultRepository
-
-    enum class Type {
-        auto, audio, video, command
-    }
 
     private val urlsForAudioType = listOf(
         "music",
@@ -111,19 +125,22 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
 
     var processingItems = MutableStateFlow(false)
     var processingItemsJob : Job? = null
+    var processingSort = MutableStateFlow("ASC")
 
     init {
         dbManager =  DBManager.getInstance(application)
         dao = dbManager.downloadDao
+        commandTemplateDao = DBManager.getInstance(application).commandTemplateDao
         repository = DownloadRepository(dao)
         historyRepository = HistoryRepository(dbManager.historyDao)
-        resultRepository = ResultRepository(dbManager.resultDao, application)
+        resultRepository = ResultRepository(dbManager.resultDao, commandTemplateDao, application)
         sharedPreferences = PreferenceManager.getDefaultSharedPreferences(application)
-        commandTemplateDao = DBManager.getInstance(application).commandTemplateDao
+        ytdlpUtil = YTDLPUtil(application, commandTemplateDao)
 
         activeDownloadsCount = repository.activeDownloadsCount
+        activePausedDownloadsCount = repository.activePausedDownloadsCount
         queuedDownloadsCount = repository.queuedDownloadsCount
-        activeQueuedDownloadsCount = repository.activeQueuedDownloadsCount
+        pausedDownloadsCount = repository.pausedDownloadsCount
         cancelledDownloadsCount = repository.cancelledDownloadsCount
         erroredDownloadsCount = repository.erroredDownloadsCount
         savedDownloadsCount = repository.savedDownloadsCount
@@ -132,18 +149,37 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
         allDownloads = repository.allDownloads.flow
         queuedDownloads = repository.queuedDownloads.flow
         activeDownloads = repository.activeDownloads
-        processingDownloads = repository.processingDownloads
+        activePausedDownloads = repository.activePausedDownloads
         savedDownloads = repository.savedDownloads.flow
         scheduledDownloads = repository.scheduledDownloads.flow
         cancelledDownloads = repository.cancelledDownloads.flow
         erroredDownloads = repository.erroredDownloads.flow
         viewModelScope.launch(Dispatchers.IO){
             if (sharedPreferences.getBoolean("use_extra_commands", false)){
-                extraCommandsForAudio = commandTemplateDao.getAllTemplatesAsExtraCommandsForAudio().joinToString(" ")
-                extraCommandsForVideo = commandTemplateDao.getAllTemplatesAsExtraCommandsForVideo().joinToString(" ")
+                extraCommandsForAudio = commandTemplateDao.getAllTemplatesAsExtraCommandsForAudio()
+                extraCommandsForVideo = commandTemplateDao.getAllTemplatesAsExtraCommandsForVideo()
             }
         }
 
+        pausedAllDownloadsFlow = combine(activeDownloadsCount, queuedDownloadsCount, pausedDownloadsCount) { active, queued, paused ->
+            if (isPausingResuming) {
+                return@combine PausedAllDownloadsState.PROCESSING
+            }
+
+            if (active == 0 && queued == 0 && paused == 0) {
+                return@combine PausedAllDownloadsState.HIDDEN
+            }else if (paused > 1 || (active == 0 && queued > 0) || (paused > 0 && active > 0)) {
+                return@combine PausedAllDownloadsState.RESUME
+            }else if (active > 1 || (active > 0 && queued > 0)) {
+                return@combine PausedAllDownloadsState.PAUSE
+            }else{
+                return@combine PausedAllDownloadsState.HIDDEN
+            }
+        }
+
+        pausedAllDownloads.addSource(pausedAllDownloadsFlow.asLiveData()) {
+            pausedAllDownloads.value = it
+        }
 
         val confTmp = Configuration(application.resources.configuration)
         val locale = if (Build.VERSION.SDK_INT < 33) {
@@ -175,6 +211,14 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
         repository.update(item)
     }
 
+    suspend fun putToSaved(item: DownloadItem) {
+        item.status = DownloadRepository.Status.Saved.toString()
+        val id = repository.update(item)
+        if (item.needsDataUpdating()) {
+            continueUpdatingDataInBackground(listOf(id))
+        }
+    }
+
     fun getItemByID(id: Long) : DownloadItem {
         return repository.getItemByID(id)
     }
@@ -187,25 +231,25 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
         return historyRepository.getItem(id)
     }
 
-    fun getDownloadType(t: Type? = null, url: String) : Type {
+    fun getDownloadType(t: DownloadType? = null, url: String) : DownloadType {
         var type = t
 
         if (type == null){
-            val preferredDownloadType = sharedPreferences.getString("preferred_download_type", Type.auto.toString())
+            val preferredDownloadType = sharedPreferences.getString("preferred_download_type", DownloadType.auto.toString())
             type = if (sharedPreferences.getBoolean("remember_download_type", false)){
-                Type.valueOf(sharedPreferences.getString("last_used_download_type",
+                DownloadType.valueOf(sharedPreferences.getString("last_used_download_type",
                     preferredDownloadType)!!)
             }else{
-                Type.valueOf(preferredDownloadType!!)
+                DownloadType.valueOf(preferredDownloadType!!)
             }
         }
 
         return when(type){
-            Type.auto -> {
+            DownloadType.auto -> {
                 if (urlsForAudioType.any { url.contains(it) }){
-                    Type.audio
+                    DownloadType.audio
                 }else{
-                    Type.video
+                    DownloadType.video
                 }
             }
 
@@ -213,46 +257,53 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
         }
     }
 
-    fun createDownloadItemFromResult(result: ResultItem?, url: String = "", givenType: Type) : DownloadItem {
+    fun createDownloadItemFromResult(result: ResultItem?, url: String = "", givenType: DownloadType) : DownloadItem {
         val resultItem = result ?: createEmptyResultItem(url)
 
         val embedSubs = sharedPreferences.getBoolean("embed_subtitles", false)
         val saveSubs = sharedPreferences.getBoolean("write_subtitles", false)
         val saveAutoSubs = sharedPreferences.getBoolean("write_auto_subtitles", false)
+        val burnSubs = sharedPreferences.getBoolean("burn_subtitles", false)
         val recodeVideo = sharedPreferences.getBoolean("recode_video", false)
+        val compatibilityMode = sharedPreferences.getBoolean("compatible_video", false)
+        val removeAudio = sharedPreferences.getBoolean("remove_audio", false)
+        val alsoDownloadAudio = sharedPreferences.getBoolean("also_download_audio", false)
         val addChapters = sharedPreferences.getBoolean("add_chapters", false)
         val saveThumb = sharedPreferences.getBoolean("write_thumbnail", false)
         val embedThumb = sharedPreferences.getBoolean("embed_thumbnail", false)
+        val videoEmbedThumb = sharedPreferences.getBoolean("video_embed_thumbnail", false)
         val cropThumb = sharedPreferences.getBoolean("crop_thumbnail", false)
 
         var type = getDownloadType(givenType, resultItem.url)
-        if(type == Type.command && commandTemplateDao.getTotalNumber() == 0) type = Type.video
+        if(type == DownloadType.command && commandTemplateDao.getTotalNumber() == 0) type = DownloadType.video
 
-        val customFileNameTemplate = when(type) {
-            Type.audio -> sharedPreferences.getString("file_name_template_audio", "%(uploader).30B - %(title).170B")
-            Type.video -> sharedPreferences.getString("file_name_template", "%(uploader).30B - %(title).170B")
+        var customFileNameTemplate = when(type) {
+            DownloadType.audio -> sharedPreferences.getString("file_name_template_audio", "%(uploader).30B - %(title).170B")!!
+            DownloadType.video -> sharedPreferences.getString("file_name_template", "%(uploader).30B - %(title).170B")!!
             else -> ""
         }
+        customFileNameTemplate = applySubdirectoryPreferences(customFileNameTemplate)
 
         val downloadPath = when(type){
-            Type.audio -> sharedPreferences.getString("music_path", FileUtil.getDefaultAudioPath())
-            Type.video -> sharedPreferences.getString("video_path",  FileUtil.getDefaultVideoPath())
+            DownloadType.audio -> sharedPreferences.getString("music_path", FileUtil.getDefaultAudioPath())
+            DownloadType.video -> sharedPreferences.getString("video_path",  FileUtil.getDefaultVideoPath())
             else -> sharedPreferences.getString("command_path", FileUtil.getDefaultCommandPath())
         }
 
         val container = when(type){
-            Type.audio -> sharedPreferences.getString("audio_format", "")
+            DownloadType.audio -> sharedPreferences.getString("audio_format", "")
             else -> sharedPreferences.getString("video_format", "")
         }
 
 
         val sponsorblock = sharedPreferences.getStringSet("sponsorblock_filters", emptySet())
+        val bitrate = sharedPreferences.getString("audio_bitrate", "")
 
-        val audioPreferences = AudioPreferences(embedThumb, cropThumb,false, ArrayList(sponsorblock!!))
+        val audioPreferences = AudioPreferences(embedThumb, cropThumb,false, ArrayList(sponsorblock!!), bitrate!!)
 
 
         val preferredAudioFormats = getPreferredAudioFormats(resultItem.formats)
-        val subsLanguages = sharedPreferences.getString("subs_lang", "en.*,.*-orig")!!
+        val subsLanguages = sharedPreferences.getString("subs_lang", ".*-orig")!!
 
         val videoPreferences = VideoPreferences(
             embedSubs,
@@ -260,16 +311,25 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
             ArrayList(sponsorblock),
             saveSubs,
             saveAutoSubs,
+            burnSubs,
             subsLanguages,
             audioFormatIDs = preferredAudioFormats,
-            recodeVideo = recodeVideo
+            recodeVideo = recodeVideo,
+            compatibilityMode = compatibilityMode,
+            embedThumbnail = videoEmbedThumb,
+            removeAudio = removeAudio,
+            alsoDownloadAsAudio = alsoDownloadAudio
         )
 
         val extraCommands = when(type){
-            Type.audio -> extraCommandsForAudio
-            Type.video -> extraCommandsForVideo
-            else -> ""
-        }
+            DownloadType.audio -> extraCommandsForAudio
+            DownloadType.video -> extraCommandsForVideo
+            else -> listOf()
+        }.filter {
+            it.urlRegex.isEmpty() || it.urlRegex.any { u ->
+                Regex(u).containsMatchIn(resultItem.url)
+            }
+        }.joinToString(" ") { it.content }
 
         return DownloadItem(0,
             resultItem.url,
@@ -278,24 +338,25 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
             resultItem.thumb,
             resultItem.duration,
             type,
-            getFormat(resultItem.formats, type),
+            getFormat(resultItem.formats, type, resultItem.url),
             container!!,
             "",
-            resultItem.formats,
+            resultItem.formats.toMutableList(),
             downloadPath!!, resultItem.website,
             "",
             if (resultItem.playlistTitle == resultRepository.YTDLNIS_SEARCH) "" else resultItem.playlistTitle,
             audioPreferences,
             videoPreferences,
             extraCommands,
-            customFileNameTemplate!!,
+            customFileNameTemplate,
             saveThumb,
             DownloadRepository.Status.Queued.toString(),
             0,
             null,
             playlistURL = resultItem.playlistURL,
             playlistIndex = resultItem.playlistIndex,
-            incognito = sharedPreferences.getBoolean("incognito", false)
+            incognito = sharedPreferences.getBoolean("incognito", false),
+            availableSubtitles = resultItem.availableSubtitles
         )
     }
 
@@ -357,25 +418,25 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
         )
     }
 
-    fun switchDownloadType(list: List<DownloadItem>, type: Type) : List<DownloadItem>{
+    fun switchDownloadType(list: List<DownloadItem>, type: DownloadType) : List<DownloadItem>{
 
         list.forEach {
-            val format = getFormat(it.allFormats, type)
+            val format = getFormat(it.allFormats, type, it.url)
             it.format = format
 
             var updatedDownloadPath = ""
             var container = ""
 
             when(type){
-                Type.audio -> {
+                DownloadType.audio -> {
                     updatedDownloadPath = sharedPreferences.getString("music_path", FileUtil.getDefaultAudioPath())!!
                     container = sharedPreferences.getString("audio_format", "")!!
                 }
-                Type.video -> {
+                DownloadType.video -> {
                     updatedDownloadPath = sharedPreferences.getString("video_path", FileUtil.getDefaultVideoPath())!!
                     container = sharedPreferences.getString("video_format", "")!!
                 }
-                Type.command -> {
+                DownloadType.command -> {
                     updatedDownloadPath = sharedPreferences.getString("command_path", FileUtil.getDefaultCommandPath())!!
                     container = ""
                 }
@@ -395,42 +456,70 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
         val embedSubs = sharedPreferences.getBoolean("embed_subtitles", false)
         val saveSubs = sharedPreferences.getBoolean("write_subtitles", false)
         val saveAutoSubs = sharedPreferences.getBoolean("write_auto_subtitles", false)
+        val burnSubs = sharedPreferences.getBoolean("burn_subtitles", false)
         val recodeVideo = sharedPreferences.getBoolean("recode_video", false)
+        val removeAudio = sharedPreferences.getBoolean("remove_audio", false)
+        val compatibilityMode = sharedPreferences.getBoolean("compatible_video", false)
+        val alsoDownloadAudio = sharedPreferences.getBoolean("also_download_audio", false)
         val addChapters = sharedPreferences.getBoolean("add_chapters", false)
         val saveThumb = sharedPreferences.getBoolean("write_thumbnail", false)
         val embedThumb = sharedPreferences.getBoolean("embed_thumbnail", false)
         val cropThumb = sharedPreferences.getBoolean("crop_thumbnail", false)
-        val subsLanguages = sharedPreferences.getString("subs_lang", "en.*,.*-orig")!!
+        val subsLanguages = sharedPreferences.getString("subs_lang", ".*-orig")!!
 
-        val customFileNameTemplate = when(historyItem.type) {
-            Type.audio -> sharedPreferences.getString("file_name_template_audio", "%(uploader).30B - %(title).170B")
-            Type.video -> sharedPreferences.getString("file_name_template", "%(uploader).30B - %(title).170B")
+        var customFileNameTemplate = when(historyItem.type) {
+            DownloadType.audio -> sharedPreferences.getString("file_name_template_audio", "%(uploader).30B - %(title).170B")!!
+            DownloadType.video -> sharedPreferences.getString("file_name_template", "%(uploader).30B - %(title).170B")!!
             else -> ""
         }
+        customFileNameTemplate = applySubdirectoryPreferences(customFileNameTemplate)
 
         val container = when(historyItem.type){
-            Type.audio -> sharedPreferences.getString("audio_format", "Default")!!
-            Type.video -> sharedPreferences.getString("video_format", "Default")!!
+            DownloadType.audio -> sharedPreferences.getString("audio_format", "Default")!!
+            DownloadType.video -> sharedPreferences.getString("video_format", "Default")!!
             else -> ""
         }
 
         val defaultPath = when(historyItem.type) {
-            Type.audio -> FileUtil.getDefaultAudioPath()
-            Type.video -> FileUtil.getDefaultVideoPath()
-            Type.command -> FileUtil.getDefaultCommandPath()
+            DownloadType.audio -> FileUtil.getDefaultAudioPath()
+            DownloadType.video -> FileUtil.getDefaultVideoPath()
+            DownloadType.command -> FileUtil.getDefaultCommandPath()
             else -> ""
         }
 
         val sponsorblock = sharedPreferences.getStringSet("sponsorblock_filters", emptySet())
+        val audioBitrate = sharedPreferences.getString("audio_bitrate", "")
 
-        val extraCommands = when(historyItem.type){
-            Type.audio -> extraCommandsForAudio
-            Type.video -> extraCommandsForVideo
-            else -> ""
-        }
+        val extraCommands = when (historyItem.type) {
+            DownloadType.audio -> extraCommandsForAudio
+            DownloadType.video -> extraCommandsForVideo
+            else -> listOf()
+        }.filter {
+            it.urlRegex.isEmpty() || it.urlRegex.any { u ->
+                Regex(u).containsMatchIn(historyItem.url)
+            }
+        }.joinToString(" ") { it.content }
 
-        val audioPreferences = AudioPreferences(embedThumb, cropThumb,false, ArrayList(sponsorblock!!))
-        val videoPreferences = VideoPreferences(embedSubs, addChapters, false, ArrayList(sponsorblock), saveSubs, saveAutoSubs, subsLanguages, recodeVideo = recodeVideo)
+        val audioPreferences = AudioPreferences(
+            embedThumb = embedThumb,
+            cropThumb = cropThumb,
+            splitByChapters = false,
+            sponsorBlockFilters = ArrayList(sponsorblock!!),
+            bitrate = audioBitrate!!
+        )
+        val videoPreferences = VideoPreferences(
+            embedSubs = embedSubs,
+            addChapters = addChapters,
+            splitByChapters = false,
+            sponsorBlockFilters = ArrayList(sponsorblock),
+            writeSubs = saveSubs,
+            writeAutoSubs = saveAutoSubs,
+            burnSubs = burnSubs,
+            subsLanguages = subsLanguages,
+            recodeVideo = recodeVideo,
+            compatibilityMode = compatibilityMode,
+            removeAudio = removeAudio,
+            alsoDownloadAsAudio = alsoDownloadAudio)
         var path = defaultPath
         historyItem.downloadPath.first().apply {
             File(this).parent?.apply {
@@ -458,7 +547,7 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
             audioPreferences,
             videoPreferences,
             extraCommands,
-            customFileNameTemplate!!,
+            customFileNameTemplate,
             saveThumb,
             DownloadRepository.Status.Queued.toString(),
             0,
@@ -469,20 +558,23 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
     }
 
 
-    fun getFormat(formats: List<Format>, type: Type) : Format {
+    //pass for video download for audio format sorter, so that it wont apply certain preferences that should be only for audio downloads
+    fun getFormat(formats: List<Format>, type: DownloadType, url: String? = null, forVideoDownload: Boolean = false) : Format {
         when(type) {
-            Type.audio -> {
+            DownloadType.audio -> {
                 return cloneFormat (
                     try {
-                        val theFormats = formats.filter { it.vcodec.isBlank() || it.vcodec == "none" }
-                        FormatUtil(application).sortAudioFormats(theFormats).first()
+                        val theFormats = formats.filter { it.vcodec.isBlank() || it.vcodec == "none" }.ifEmpty {
+                            formatUtil.getGenericAudioFormats(resources).sortedByDescending { it.filesize }
+                        }
+                        FormatUtil(application).sortAudioFormats(theFormats, forVideoDownload).first()
                     }catch (e: Exception){
                         formatUtil.getGenericAudioFormats(resources).first()
                     }
                 )
 
             }
-            Type.video -> {
+            DownloadType.video -> {
                 return cloneFormat(
                     try {
                         val theFormats = formats.filter { it.vcodec.isNotBlank() && it.vcodec != "none" }.ifEmpty {
@@ -496,13 +588,28 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
                 )
             }
             else -> {
-                val lastUsedCommandTemplate = sharedPreferences.getString("lastCommandTemplateUsed", "")!!
-                val c = if (lastUsedCommandTemplate.isBlank()){
-                    commandTemplateDao.getFirst() ?: CommandTemplate(0,"","", useAsExtraCommand = false, useAsExtraCommandAudio = false, useAsExtraCommandVideo = false)
-                }else{
-                    commandTemplateDao.getTemplateByContent(lastUsedCommandTemplate) ?: CommandTemplate(0, "", lastUsedCommandTemplate, useAsExtraCommand = false, useAsExtraCommandAudio = false, useAsExtraCommandVideo = false)
+                val preferredCommandTemplates = commandTemplateDao.getPreferredCommandTemplates()
+                var template : CommandTemplate? = null
+                if (url != null) {
+                    template = preferredCommandTemplates.firstOrNull { it.urlRegex.isEmpty() || it.urlRegex.any { u ->
+                        Regex(u).containsMatchIn(url)
+                    } }
                 }
-                return generateCommandFormat(c)
+
+                if (template == null) {
+                    template = commandTemplateDao.getFirst()
+                }
+                return generateCommandFormat(
+                    template ?: CommandTemplate(
+                        0,
+                        "",
+                        sharedPreferences.getString("lastCommandTemplateUsed", "") ?: "",
+                        useAsExtraCommand = false,
+                        useAsExtraCommandAudio = false,
+                        useAsExtraCommandVideo = false,
+                        useAsExtraCommandDataFetching = false
+                    )
+                )
             }
         }
     }
@@ -525,7 +632,7 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
             }
         }
         if (preferredAudioFormats.isEmpty()){
-            val audioF = getFormat(formats, Type.audio)
+            val audioF = getFormat(formats, DownloadType.audio, forVideoDownload = true)
             if (!formatUtil.getGenericAudioFormats(resources).contains(audioF)){
                 preferredAudioFormats.add(audioF.format_id)
             }
@@ -545,19 +652,64 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
         )
     }
 
+    suspend fun toggleProcessingSort() : String {
+        processingItems.emit(true)
+        processingSort.value = if (processingSort.value == "ASC") "DESC" else "ASC"
+        repository.reverseProcessingDownloads()
+        processingItems.emit(false)
+        return processingSort.value
+    }
 
     fun turnDownloadItemsToProcessingDownloads(itemIDs: List<Long>, deleteExisting : Boolean = false) = viewModelScope.launch(Dispatchers.IO){
         val job = viewModelScope.launch(Dispatchers.IO) {
             repository.deleteProcessing()
             processingItems.emit(true)
             try {
-                itemIDs.forEach {
+                itemIDs.forEachIndexed { index, it ->
                     val item = repository.getItemByID(it)
                     if (processingItemsJob?.isCancelled == true) throw CancellationException()
                     if (!deleteExisting) item.id = 0
                     item.status = DownloadRepository.Status.Processing.toString()
+                    item.rowNumber = index + 1
                     repository.update(item)
                 }
+                processingItems.emit(false)
+            } catch (e: Exception) {
+                deleteProcessing()
+                processingItems.emit(false)
+            }
+        }
+        processingItemsJob = job
+    }
+
+    fun turnHistoryItemsToProcessingDownloads(itemIDs: List<Long>, downloadNow: Boolean = false) = viewModelScope.launch(Dispatchers.IO) {
+        val job = viewModelScope.launch(Dispatchers.IO) {
+            repository.deleteProcessing()
+            processingItems.emit(true)
+            try {
+                val toInsert = mutableListOf<DownloadItem>()
+                itemIDs.forEachIndexed { index, it ->
+                    val item = historyRepository.getItem(it)
+                    val downloadItem = createDownloadItemFromHistory(item!!)
+                    downloadItem.status = DownloadRepository.Status.Processing.toString()
+                    downloadItem.rowNumber = index + 1
+
+                    if (processingItemsJob?.isCancelled == true) {
+                        throw CancellationException()
+                    }
+
+                    if (downloadNow) {
+                        downloadItem.status = DownloadRepository.Status.Queued.toString()
+                        queueDownloads(listOf(downloadItem))
+                    }else{
+                        toInsert.add(downloadItem)
+                        //repository.insert(downloadItem)
+                    }
+                }
+                toInsert.chunked(500).forEach { chunked ->
+                    repository.insertAll(chunked)
+                }
+
                 processingItems.emit(false)
             } catch (e: Exception) {
                 deleteProcessing()
@@ -574,13 +726,14 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
             processingItems.emit(true)
             try {
                 val toInsert = mutableListOf<DownloadItem>()
-                itemIDs.forEach { id ->
-                    val item = resultRepository.getItemByID(id) ?: return@forEach
+                itemIDs.forEachIndexed { index, id ->
+                    val item = resultRepository.getItemByID(id) ?: return@forEachIndexed
                     val preferredType = getDownloadType(url = item.url).toString()
-                    val downloadItem = createDownloadItemFromResult(result = item, givenType = Type.valueOf(
+                    val downloadItem = createDownloadItemFromResult(result = item, givenType = DownloadType.valueOf(
                         preferredType
                     ))
                     downloadItem.status = DownloadRepository.Status.Processing.toString()
+                    downloadItem.rowNumber = index + 1
 
                     if (processingItemsJob?.isCancelled == true) {
                         throw CancellationException()
@@ -594,7 +747,9 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
                         //repository.insert(downloadItem)
                     }
                 }
-                repository.insertAll(toInsert)
+                toInsert.chunked(500).forEach { chunked ->
+                    repository.insertAll(chunked)
+                }
                 processingItems.emit(false)
             }catch (e: Exception) {
                 deleteProcessing()
@@ -656,7 +811,7 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
         repository.deleteAllWithIDs(ids)
     }
 
-    fun cancelActiveQueued() = viewModelScope.launch(Dispatchers.IO) {
+    private fun cancelActiveQueued() = viewModelScope.launch(Dispatchers.IO) {
         processingItemsJob?.apply { cancel(CancellationException()) }
         repository.cancelActiveQueued()
     }
@@ -677,7 +832,7 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
     }
 
     fun getSaved() : List<DownloadItem> {
-        return dao.getSavedDownloadsList()
+        return repository.getSavedDownloads()
     }
 
     fun getActiveDownloads() : List<DownloadItem>{
@@ -705,69 +860,37 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
         repository.startDownloadWorker(emptyList(), application)
     }
 
-    suspend fun resetActiveToQueued() {
-        dbManager.downloadDao.resetActiveToQueued()
+    suspend fun resetScheduleItemForAllScheduledItemsAndStartDownload() = CoroutineScope(Dispatchers.IO).launch {
+        dbManager.downloadDao.resetScheduleTimeForAllScheduledItems()
+        repository.startDownloadWorker(emptyList(), application)
     }
 
-    suspend fun startDownloadWorker(list: List<DownloadItem>){
-        repository.startDownloadWorker(list, application)
+    suspend fun putAtTopOfQueue(ids: List<Long>) {
+        dao.putAtTopOfQueue(ids)
     }
 
-    suspend fun putAtTopOfQueue(ids: List<Long>) = CoroutineScope(Dispatchers.IO).launch{
-        val downloads = dao.getQueuedDownloadsListIDs()
-        val lastID = ids.maxOf { it }
-        ids.forEach { dao.updateDownloadID(it, -it) }
-        val newIDs = downloads.take(ids.size)
-
-        //other ids that need to move around
-        val takenPositions = mutableListOf<Long>()
-        for (dID in downloads.filter { !ids.contains(it) && it < lastID }.reversed()){
-            val newID = downloads.last { !newIDs.contains(it) && !takenPositions.contains(it) && it <= lastID }
-            takenPositions.add(newID)
-            dao.updateDownloadID(dID, newID)
-        }
-
-        ids.forEachIndexed { idx, it ->
-            dao.updateDownloadID(-it, newIDs[idx])
-        }
+    suspend fun putAtBottomOfQueue(ids: List<Long>) {
+        dao.putAtBottomOfQueue(ids)
     }
 
 
-    suspend fun putAtBottomOfQueue(ids: List<Long>) = CoroutineScope(Dispatchers.IO).launch{
-        val downloads = dao.getQueuedDownloadsListIDs()
-        ids.forEach { dao.updateDownloadID(it, -it)}
-        val newIDs = downloads.sortedByDescending { it }.take(ids.size)
+    fun putAtPosition(currentId: Long, targetId: Long) = CoroutineScope(Dispatchers.IO).launch {
+        if (currentId == targetId) return@launch
 
-        //other ids that need to move around
-        val takenPositions = mutableListOf<Long>()
-        for (dID in downloads.filter { !ids.contains(it) }){
-            val newID = downloads.first { !newIDs.contains(it) && !takenPositions.contains(it) }
-            takenPositions.add(newID)
-            dao.updateDownloadID(dID, newID)
-        }
+        val orderedIds = dao.getQueuedDownloadsListIDs()
+        val currentIndex = orderedIds.indexOf(currentId)
+        val targetIndex = orderedIds.indexOf(targetId)
+        if (currentIndex == -1 || targetIndex == -1) return@launch
 
-        ids.reversed().forEachIndexed { idx, it ->
-            dao.updateDownloadID(-it, newIDs[idx])
-        }
-    }
+        val mutableIds = orderedIds.toMutableList()
+        mutableIds.removeAt(currentIndex)
+        mutableIds.add(targetIndex, currentId)
 
+        //Figure out the bounds of what actually moved to optimize DB writes
+        val startIdx = minOf(currentIndex, targetIndex)
+        val endIdx = maxOf(currentIndex, targetIndex)
 
-    fun putAtPosition(current: Long, id: Long) = CoroutineScope(Dispatchers.IO).launch {
-        val downloads = dao.getQueuedDownloadsListIDs()
-        dao.updateDownloadID(current, -current)
-
-        if (current > id){
-            for (dID in downloads.filter { it in id until current }.reversed()){
-                val index = downloads.indexOf(dID)
-                dao.updateDownloadID(dID, downloads[index + 1])
-            }
-        }else{
-            for (dID in downloads.filter { it in (current + 1)..id }){
-                val index = downloads.indexOf(dID)
-                dao.updateDownloadID(dID, downloads[index - 1])
-            }
-        }
-        dao.updateDownloadID(-current, id)
+        dao.putQueueDownloadAtPosition(mutableIds, startIdx, endIdx)
     }
 
     fun reQueueDownloadItems(items: List<Long>) = viewModelScope.launch(Dispatchers.IO) {
@@ -775,9 +898,9 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
         repository.startDownloadWorker(emptyList(), application)
     }
 
-    suspend fun queueProcessingDownloads() : QueueDownloadsResult {
-        val processingItems = repository.getProcessingDownloads()
-        return queueDownloads(processingItems)
+    suspend fun queueProcessingDownloads(ignoreDuplicates: Boolean = false) : QueueDownloadsResult {
+        val processingItems = repository.getAllProcessingDownloads()
+        return queueDownloads(processingItems, ignoreDuplicates)
     }
 
     data class QueueDownloadsResult(
@@ -786,197 +909,15 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
     )
 
     suspend fun queueDownloads(items: List<DownloadItem>, ignoreDuplicates : Boolean = false) : QueueDownloadsResult {
-        val context = App.instance
-        val alarmScheduler = AlarmScheduler(context)
-        val queuedItems = mutableListOf<DownloadItem>()
+        val res = DownloadQueueUtil(application).enqueue(items, ignoreDuplicates)
 
-        //download id, history item id
-        //history item id if the existing item is already downloaded
-        //if history id is empty, it just found an existing item in the queue/active list
-        val existingItemIDs = mutableListOf<AlreadyExistsIDs>()
+        val idsToUpdateDataInBackground = res.queued
+            .filter { it.needsDataUpdating() && it.downloadStartTime > 0 }.map { it.id }
+        if (idsToUpdateDataInBackground.isNotEmpty()) continueUpdatingDataInBackground(idsToUpdateDataInBackground)
 
-        val downloadArchive =   runCatching {
-            File(FileUtil.getDownloadArchivePath(context)).useLines { it.toList() }
-        }
-            .getOrElse { listOf() }
-            .map { it.split(" ")[1] }
+        if (res.duplicates.isNotEmpty()) alreadyExistsUiState.value = res.duplicates
 
-        val checkDuplicate = sharedPreferences.getString("prevent_duplicate_downloads", "")!!
-        val activeAndQueuedDownloads = withContext(Dispatchers.IO){
-            repository.getActiveAndQueuedDownloads()
-        }
-
-        items.forEach {
-            if (it.downloadStartTime > 0) {
-                it.status = DownloadRepository.Status.Scheduled.toString()
-            }else{
-                it.status = DownloadRepository.Status.Queued.toString()
-            }
-
-
-            //CHECK DUPLICATES
-            var isDuplicate = false
-            if (checkDuplicate.isNotEmpty() && !ignoreDuplicates){
-                when(checkDuplicate){
-                    "download_archive" -> {
-                        if (downloadArchive.any { d -> it.url.contains(d) }){
-                            isDuplicate = true
-                            if (it.id == 0L){
-                                val id = runBlocking {
-                                    repository.insert(it)
-                                }
-                                it.id = id
-                            }
-                            it.status = DownloadRepository.Status.Duplicate.toString()
-                            repository.update(it)
-                            existingItemIDs.add(AlreadyExistsIDs(it.id,null))
-                        }
-                    }
-                    "url_type" -> {
-                        val existingDownload = activeAndQueuedDownloads.firstOrNull { a -> a.type == it.type && a.url == it.url  }
-                        if (existingDownload != null){
-                            isDuplicate = true
-                            if (it.id == 0L){
-                                val id = runBlocking {
-                                    repository.insert(it)
-                                }
-                                it.id = id
-                            }
-                            it.status = DownloadRepository.Status.Duplicate.toString()
-                            repository.update(it)
-                            existingItemIDs.add(AlreadyExistsIDs(it.id,null))
-                        }else{
-                            //check if downloaded and file exists
-                            val history = withContext(Dispatchers.IO){
-                                historyRepository.getAllByURL(it.url).filter { item -> item.downloadPath.any { path -> FileUtil.exists(path) } }
-                            }
-
-                            val existingHistoryItem = history.firstOrNull {
-                                    h -> h.type == it.type
-                            }
-
-                            if (existingHistoryItem != null){
-                                isDuplicate = true
-                                if (it.id == 0L){
-                                    val id = runBlocking {
-                                        repository.insert(it)
-                                    }
-                                    it.id = id
-                                }
-                                it.status = DownloadRepository.Status.Duplicate.toString()
-                                repository.update(it)
-                                existingItemIDs.add(AlreadyExistsIDs(it.id,existingHistoryItem.id))
-                            }
-                        }
-                    }
-                    "config" -> {
-                        val currentCommand = ytdlpUtil.buildYoutubeDLRequest(it)
-                        val parsedCurrentCommand = ytdlpUtil.parseYTDLRequestString(currentCommand)
-                        val existingDownload = activeAndQueuedDownloads.firstOrNull{d ->
-                            d.id = 0
-                            d.logID = null
-                            d.customFileNameTemplate = it.customFileNameTemplate
-                            d.status = DownloadRepository.Status.Queued.toString()
-                            d.toString() == it.toString()
-                        }
-
-                        if (existingDownload != null){
-                            isDuplicate = true
-                            if (it.id == 0L){
-                                val id = runBlocking {
-                                    repository.insert(it)
-                                }
-                                it.id = id
-                            }
-                            it.status = DownloadRepository.Status.Duplicate.toString()
-                            repository.update(it)
-                            existingItemIDs.add(AlreadyExistsIDs(it.id, null))
-                        }else{
-                            //check if downloaded and file exists
-                            val history = withContext(Dispatchers.IO){
-                                historyRepository.getAllByURL(it.url).filter { item -> item.downloadPath.any { path -> FileUtil.exists(path) } }
-                            }
-
-                            val existingHistoryItem = history.firstOrNull {
-                                    h -> h.command.replace("(-P \"(.*?)\")|(--trim-filenames \"(.*?)\")".toRegex(), "") == parsedCurrentCommand.replace("(-P \"(.*?)\")|(--trim-filenames \"(.*?)\")".toRegex(), "")
-                            }
-
-                            if (existingHistoryItem != null){
-                                isDuplicate = true
-                                if (it.id == 0L){
-                                    val id = runBlocking {
-                                        repository.insert(it)
-                                    }
-                                    it.id = id
-                                }
-                                it.status = DownloadRepository.Status.Duplicate.toString()
-                                repository.update(it)
-                                existingItemIDs.add(AlreadyExistsIDs(it.id, existingHistoryItem.id))
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (!isDuplicate){
-                queuedItems.add(it)
-            }
-
-
-        }
-
-        val result = QueueDownloadsResult("", listOf())
-
-        //if scheduler is on
-        val useScheduler = sharedPreferences.getBoolean("use_scheduler", false)
-        if (useScheduler && !alarmScheduler.isDuringTheScheduledTime()){
-            if (alarmScheduler.canSchedule()){
-                repository.updateAll(queuedItems)
-                alarmScheduler.schedule()
-            }else{
-                sharedPreferences.edit().putBoolean("use_scheduler", false).apply()
-                result.message = context.getString(R.string.enable_alarm_permission)
-            }
-        }else{
-            val queued = repository.updateAll(queuedItems)
-
-            if (sharedPreferences.getBoolean("paused_downloads", true)) {
-                sharedPreferences.edit().putBoolean("paused_downloads", false).apply()
-                resetActiveToQueued()
-            }
-
-            result.message = repository.startDownloadWorker(queued, context).getOrElse { "" }
-
-            if(!useScheduler){
-                CoroutineScope(Dispatchers.IO).launch {
-                    queued.filter { it.downloadStartTime != 0L && (it.title.isEmpty() || it.author.isEmpty() || it.thumb.isEmpty()) }.forEach {
-                        kotlin.runCatching {
-                            resultRepository.updateDownloadItem(it)?.apply {
-                                repository.updateWithoutUpsert(this)
-                            }
-                        }
-                    }
-                }
-            }else{
-                CoroutineScope(Dispatchers.IO).launch {
-                    queued.filter { it.title.isEmpty() || it.author.isEmpty() || it.thumb.isEmpty() }.forEach {
-                        kotlin.runCatching {
-                            resultRepository.updateDownloadItem(it)?.apply {
-                                repository.updateWithoutUpsert(this)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-
-        if (existingItemIDs.isNotEmpty()){
-            alreadyExistsUiState.value = existingItemIDs.toList()
-            result.duplicateDownloadIDs = existingItemIDs.toList()
-        }
-
-        return result
+        return QueueDownloadsResult(res.message, res.duplicates)
     }
 
     fun getQueuedCollectedFileSize() : Long {
@@ -1000,17 +941,22 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
     }
 
 
-    fun updateAllProcessingFormats(formatTuples : List<MultipleItemFormatTuple>) = viewModelScope.launch(Dispatchers.IO) {
-        val items = repository.getProcessingDownloads()
+    suspend fun updateAllProcessingFormats(selectedItems: List<Long>?, formatTuples : List<MultipleItemFormatTuple>) {
+        val items = if (selectedItems.isNullOrEmpty()) {
+            repository.getAllProcessingDownloads()
+        }else {
+            repository.getAllItemsByIDs(selectedItems)
+        }
+
         items.forEach {
             val ft = formatTuples.first { ft -> ft.url == it.url }.formatTuple
             ft.format?.apply {
                 it.format = this
             }
 
-            if (it.type == Type.video) {
+            if (it.type == DownloadType.video) {
+                it.videoPreferences.audioFormatIDs.clear()
                 ft.audioFormats?.map { a -> a.format_id }?.let { list ->
-                    it.videoPreferences.audioFormatIDs.clear()
                     it.videoPreferences.audioFormatIDs.addAll(list)
                 }
             }
@@ -1020,40 +966,59 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
 
     }
 
-    suspend fun updateProcessingCommandFormat(format: Format){
-        val items = repository.getProcessingDownloads()
+    suspend fun updateProcessingCommandFormat(selectedItems: List<Long>?, format: Format){
+        val items = if (selectedItems.isNullOrEmpty()) {
+            repository.getAllProcessingDownloads()
+        }else {
+            repository.getAllItemsByIDs(selectedItems)
+        }
+
         items.forEach {
             it.format = format
             repository.update(it)
         }
     }
 
-    suspend fun updateProcessingContainer(cont: String) {
+    suspend fun updateProcessingContainer(checkedItems: List<Long>?, cont: String) {
         var container = ""
         if (cont != resources.getString(R.string.defaultValue)) {
             container = cont
         }
-        dao.updateProcessingContainer(container)
+
+        if (checkedItems.isNullOrEmpty()) {
+            dao.updateProcessingContainer(container)
+        }else {
+            dao.updateContainerByIds(checkedItems, container)
+        }
+
     }
 
-    suspend fun updateProcessingDownloadPath(path: String){
-        dao.updateProcessingDownloadPath(path)
+    suspend fun updateProcessingDownloadPath(selectedItems: List<Long>?, path: String){
+        if (selectedItems.isNullOrEmpty()) {
+            dao.updateProcessingDownloadPath(path)
+        }else {
+            dao.updateDownloadPathByIDs(selectedItems, path)
+        }
     }
 
-    fun getProcessingDownloads() : List<DownloadItem> {
-        return repository.getProcessingDownloads()
+    fun getProcessingDownloads(checkedItems: List<Long>?) : List<DownloadItem> {
+        return if (checkedItems.isNullOrEmpty()) {
+            repository.getAllProcessingDownloads()
+        }else {
+            repository.getAllItemsByIDs(checkedItems)
+        }
+
     }
 
     fun updateDownloadItemFormats(id: Long, list: List<Format>) = viewModelScope.launch(Dispatchers.IO) {
         val item = repository.getItemByID(id)
         item.allFormats.clear()
         item.allFormats.addAll(list)
-        item.format = getFormat(list, item.type)
+        item.format = getFormat(list, item.type, item.url)
 
         runCatching {
             resultRepository.getAllByURL(item.url).forEach {
-                it.formats.clear()
-                it.formats.addAll(list)
+                it.formats = list
                 resultRepository.update(it)
             }
         }
@@ -1064,14 +1029,13 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
         items.forEach { item ->
             item.allFormats.clear()
             item.allFormats.addAll(list)
-            item.format = getFormat(list, item.type)
+            item.format = getFormat(list, item.type, item.url)
             repository.update(item)
         }
 
         kotlin.runCatching {
             resultRepository.getAllByURL(url).forEach {
-                it.formats.clear()
-                it.formats.addAll(list)
+                it.formats = list
                 resultRepository.update(it)
             }
         }
@@ -1082,15 +1046,23 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
         resultRepository.deleteByUrl(url)
     }
 
-    suspend fun continueUpdatingFormatsOnBackground(){
-        val ids = repository.getProcessingDownloads().map { it.id }
-        dao.updateProcessingtoSavedStatus()
+    suspend fun continueUpdatingFormatsOnBackground(selectedItems: List<Long>?){
+        val allProcessing = repository.getAllProcessingDownloads().map { it.id }
+
+        val ids = if (selectedItems.isNullOrEmpty()) {
+            allProcessing
+        }else {
+            selectedItems
+        }
+
+        moveProcessingToSavedCategory()
 
         val id = System.currentTimeMillis().toInt()
         val workRequest = OneTimeWorkRequestBuilder<UpdateMultipleDownloadsFormatsWorker>()
             .setInputData(
                 Data.Builder()
                     .putLongArray("ids", ids.toLongArray())
+                    .putLongArray("other_ids_in_bundle", allProcessing.filter { !ids.contains(it) }.toLongArray())
                     .putInt("id", id)
                     .build())
             .addTag("updateFormats")
@@ -1104,8 +1076,30 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
 
     }
 
-    suspend fun updateProcessingType(newType: Type) {
-        val processing = repository.getProcessingDownloads()
+    private fun continueUpdatingDataInBackground(ids: List<Long>){
+        val workRequest = OneTimeWorkRequestBuilder<UpdateMultipleDownloadsDataWorker>()
+            .setInputData(
+                Data.Builder()
+                    .putLongArray("ids", ids.toLongArray())
+                    .build())
+            .addTag("updateData")
+            .build()
+        val context = App.instance
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            System.currentTimeMillis().toString(),
+            ExistingWorkPolicy.REPLACE,
+            workRequest
+        )
+
+    }
+
+    suspend fun updateProcessingType(selectedItems: List<Long>?, newType: DownloadType) {
+        val processing = if (selectedItems.isNullOrEmpty()) {
+            repository.getAllProcessingDownloads()
+        }else{
+            repository.getAllItemsByIDs(selectedItems)
+        }
+
         processing.apply {
             val new = switchDownloadType(this, newType)
             new.forEach {
@@ -1114,35 +1108,39 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
         }
     }
 
-    suspend fun updateProcessingDownloadTimeAndQueueScheduled(time: Long) : QueueDownloadsResult {
-        val processing = repository.getProcessingDownloads()
+    suspend fun updateProcessingDownloadTimeAndQueueScheduled(time: Long, ignoreDuplicates: Boolean = false) : QueueDownloadsResult {
+        val processing = repository.getAllProcessingDownloads()
         processing.forEach {
             it.downloadStartTime = time
             it.status = DownloadRepository.Status.Scheduled.toString()
         }
-        return queueDownloads(processing)
+        return queueDownloads(processing, ignoreDuplicates)
     }
 
-    fun checkIfAllProcessingItemsHaveSameType() : Pair<Boolean, Type> {
-        val types = dao.getProcessingDownloadTypes()
-        if (types.isEmpty()) {
-            return Pair(false, Type.command)
+    fun checkIfAllProcessingItemsHaveSameType(selectedItems: List<Long>?) : Pair<Boolean, DownloadType> {
+        val types = if (!selectedItems.isNullOrEmpty()) {
+            dao.getProcessingDownloadTypesByIDs(selectedItems)
+        }else {
+            dao.getProcessingDownloadTypes()
         }
 
-        return Pair(types.size == 1, Type.valueOf(types.first()))
+        if (types.isEmpty()) {
+            return Pair(false, DownloadType.command)
+        }
+
+        return Pair(types.size == 1, DownloadType.valueOf(types.first()))
     }
 
-    fun checkIfAllProcessingItemsHaveSameContainer() : Pair<Boolean, String> {
-        val containers = dao.getProcessingDownloadContainers()
-        return Pair(containers.size == 1, containers.first())
+    fun checkIfAllProcessingItemsHaveSameContainer(checkedItems: List<Long>?) : Pair<Boolean, String> {
+        val containers = if (checkedItems.isNullOrEmpty()) {
+            dao.getProcessingDownloadContainers()
+        }else {
+            dao.getDownloadContainersByIDs(checkedItems)
+        }
+
+        return Pair(containers.size == 1, if (containers.isNotEmpty()) containers.first() else "")
     }
 
-
-    suspend fun updateItemsWithIdsToProcessingStatus(ids: List<Long>) {
-        repository.deleteProcessing()
-        dao.updateItemsToProcessing(ids)
-        val first = dao.getFirstProcessingDownload()
-    }
 
     suspend fun updateToStatus(id: Long, status: DownloadRepository.Status) {
         repository.setDownloadStatus(id, status)
@@ -1150,6 +1148,10 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
 
     fun getURLsByStatus(list: List<DownloadRepository.Status>) : List<String> {
         return dao.getURLsByStatus(list.map { it.toString() })
+    }
+
+    fun getIDsByStatus(list: List<DownloadRepository.Status>) : List<Long> {
+        return dao.getIDsByStatus(list.map { it.toString() })
     }
 
     fun getURLsByIds(list: List<Long>) : List<String> {
@@ -1164,13 +1166,129 @@ class DownloadViewModel(private val application: Application) : AndroidViewModel
         return dao.getScheduledIDsBetweenTwoItems(item1, item2)
     }
 
-    suspend fun updateProcessingIncognito(incognito: Boolean) {
-        dao.updateProcessingIncognito(incognito)
+    suspend fun updateProcessingIncognito(selectedItems: List<Long>?, incognito: Boolean) {
+        if (selectedItems.isNullOrEmpty()) {
+            dao.updateProcessingIncognito(incognito)
+        }else {
+            dao.updateIncognitoByIDs(incognito, selectedItems)
+        }
     }
 
-    fun areAllProcessingIncognito() : Boolean {
-        return dao.getProcessingAsIncognitoCount() > 0
+    fun areAllProcessingIncognito(selectedItems: List<Long>?) : Boolean {
+        return if (selectedItems.isNullOrEmpty()) {
+            dao.getProcessingAsIncognitoCount() > 0
+        }else {
+            dao.getProcessingAsIncognitoCountByIDs(selectedItems) > 0
+        }
     }
 
+    fun applySubdirectoryPreferences(currentTemplate: String) : String {
+        var customFileNameTemplate = currentTemplate
+        val subDirectories = sharedPreferences.getStringSet("save_subdirectory", setOf())!!
+        if (subDirectories.isNotEmpty()) {
+            if (customFileNameTemplate.isBlank()) {
+                customFileNameTemplate = "%(title)s [%(id)s].%(ext)s"
+            }
 
+            if (subDirectories.contains("media_type")) {
+                customFileNameTemplate = "%(media_type|)s/$customFileNameTemplate"
+            }
+            if (subDirectories.contains("playlist")) {
+                customFileNameTemplate = "%(playlist|)s/$customFileNameTemplate"
+            }
+            if (subDirectories.contains("website")) {
+                customFileNameTemplate = "%(fldr_website|)s/$customFileNameTemplate"
+            }
+
+            customFileNameTemplate = "./$customFileNameTemplate"
+        }
+
+        return customFileNameTemplate
+    }
+
+    fun cancelDownloadOnly(id : Long) {
+        RuntimeManager.getInstance().destroyProcessById(id.toString())
+        notificationUtil.cancelDownloadNotification(id.toInt())
+    }
+
+    suspend fun cancelDownload(id: Long) {
+        cancelDownloadOnly(id)
+        updateToStatus(id, DownloadRepository.Status.Cancelled)
+    }
+
+    suspend fun pauseDownload(id: Long)  {
+        cancelDownloadOnly(id)
+        updateToStatus(id, DownloadRepository.Status.Paused)
+    }
+
+    suspend fun pauseAllDownloads() {
+        pausedAllDownloads.value = PausedAllDownloadsState.PROCESSING
+        isPausingResuming = true
+        WorkManager.getInstance(application).cancelAllWorkByTag("download")
+        val activeDownloadsList = withContext(Dispatchers.IO){
+            getActiveDownloads()
+        }
+        activeDownloadsList.forEach {
+            cancelDownloadOnly(it.id)
+        }
+        delay(1000)
+        isPausingResuming = false
+        withContext(Dispatchers.IO){
+            repository.setDownloadStatusMultiple(activeDownloadsList.map { it.id }, DownloadRepository.Status.Paused)
+        }
+        pausedAllDownloads.value = PausedAllDownloadsState.RESUME
+    }
+
+    fun resumeAllDownloads() = viewModelScope.launch {
+        pausedAllDownloads.value = PausedAllDownloadsState.PROCESSING
+        isPausingResuming = true
+        WorkManager.getInstance(application).cancelAllWorkByTag("download")
+        val paused = withContext(Dispatchers.IO) {
+            dao.getPausedDownloadsList()
+        }
+
+        withContext(Dispatchers.IO){
+            dbManager.downloadDao.resetPausedToQueued()
+            repository.startDownloadWorker(paused, application)
+        }
+        delay(1000)
+        isPausingResuming = false
+        pausedAllDownloads.value = PausedAllDownloadsState.PAUSE
+    }
+
+    fun deleteAll() = viewModelScope.launch {
+        cancelAllDownloadsImpl()
+        repository.deleteAll()
+    }
+
+    fun cancelAllDownloads() = viewModelScope.launch {
+        cancelAllDownloadsImpl()
+    }
+
+    private suspend fun cancelAllDownloadsImpl() {
+        WorkManager.getInstance(application).cancelAllWorkByTag("download")
+        val activeDownloadsList = withContext(Dispatchers.IO){
+            getActiveDownloads()
+        }
+        activeDownloadsList.forEach {
+            cancelDownloadOnly(it.id)
+        }
+        cancelActiveQueued()
+    }
+
+    fun resumeDownload(itemID: Long) = viewModelScope.launch {
+        kotlin.runCatching {
+            val item = withContext(Dispatchers.IO){
+                repository.getItemByID(itemID)
+            }
+            item.status = DownloadRepository.Status.Queued.toString()
+            withContext(Dispatchers.IO){
+                updateDownload(item)
+            }
+            putAtTopOfQueue(listOf(itemID))
+            withContext(Dispatchers.IO){
+                repository.startDownloadWorker(listOf(item), application, false)
+            }
+        }
+    }
 }

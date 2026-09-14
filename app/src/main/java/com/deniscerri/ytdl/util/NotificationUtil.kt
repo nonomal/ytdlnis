@@ -1,5 +1,6 @@
 package com.deniscerri.ytdl.util
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
@@ -10,9 +11,12 @@ import android.content.Context
 import android.content.Intent
 import android.content.res.Resources
 import android.graphics.BitmapFactory
+import android.graphics.drawable.Icon
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.text.TextUtils
+import androidx.annotation.RequiresPermission
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.FileProvider
@@ -20,7 +24,7 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.navigation.NavDeepLinkBuilder
 import com.deniscerri.ytdl.MainActivity
 import com.deniscerri.ytdl.R
-import com.deniscerri.ytdl.database.viewmodel.DownloadViewModel
+import com.deniscerri.ytdl.database.enums.DownloadType
 import com.deniscerri.ytdl.receiver.CancelDownloadNotificationReceiver
 import com.deniscerri.ytdl.receiver.CancelWorkReceiver
 import com.deniscerri.ytdl.receiver.PauseDownloadNotificationReceiver
@@ -40,6 +44,8 @@ class NotificationUtil(var context: Context) {
 
     private val notificationManager: NotificationManagerCompat = NotificationManagerCompat.from(context)
     private val resources: Resources = context.resources
+
+    private val canPostPromotedNotifications = Build.VERSION.SDK_INT >= 36 && notificationManager.canPostPromotedNotifications()
 
     fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -110,15 +116,17 @@ class NotificationUtil(var context: Context) {
         return notificationBuilder
             .setContentTitle(resources.getString(R.string.downloading))
             .setOngoing(true)
-            .setSmallIcon(R.drawable.ic_launcher_foreground_large)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
             .setLargeIcon(
                 BitmapFactory.decodeResource(
                     resources,
-                    R.drawable.ic_launcher_foreground_large
+                    android.R.drawable.stat_sys_download
                 )
             )
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setGroup(DOWNLOAD_RUNNING_NOTIFICATION_ID.toString())
+            .setGroupSummary(true)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .clearActions()
             .build()
@@ -148,6 +156,7 @@ class NotificationUtil(var context: Context) {
     fun createDownloadServiceNotification(
         pendingIntent: PendingIntent?,
         title: String?,
+        group : Int = DOWNLOAD_RUNNING_NOTIFICATION_ID
     ): Notification {
         val notificationBuilder = getBuilder(DOWNLOAD_SERVICE_CHANNEL_ID)
 
@@ -167,6 +176,7 @@ class NotificationUtil(var context: Context) {
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setProgress(PROGRESS_MAX, PROGRESS_CURR, true)
             .setContentIntent(pendingIntent)
+            .setGroup(group.toString())
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .clearActions()
             .build()
@@ -225,20 +235,20 @@ class NotificationUtil(var context: Context) {
     fun createDownloadFinished(
         id: Long,
         title: String?,
-        downloadType: DownloadViewModel.Type,
+        downloadType: DownloadType,
         filepath: List<String>?,
         res: Resources
     ) {
         val notificationBuilder = getBuilder(DOWNLOAD_FINISHED_CHANNEL_ID)
 
         val iconType = when(downloadType){
-            DownloadViewModel.Type.audio -> {
+            DownloadType.audio -> {
                 R.drawable.ic_music
             }
-            DownloadViewModel.Type.video -> {
+            DownloadType.video -> {
                 R.drawable.ic_video
             }
-            DownloadViewModel.Type.command -> {
+            DownloadType.command -> {
                 R.drawable.ic_terminal
             }
 
@@ -253,7 +263,6 @@ class NotificationUtil(var context: Context) {
             .setSmallIcon(R.drawable.ic_launcher_foreground_large)
             .setLargeIcon(bitmap)
             .setGroup(DOWNLOAD_FINISHED_NOTIFICATION_ID.toString())
-            .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_CHILDREN)
             .setContentText(title)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
@@ -315,6 +324,22 @@ class NotificationUtil(var context: Context) {
         }
         notificationBuilder.setStyle(NotificationCompat.BigTextStyle().bigText(contentText.toString().trimIndent()))
         notificationManager.notify(DOWNLOAD_FINISHED_NOTIFICATION_ID + id.toInt(), notificationBuilder.build())
+
+        if (
+            !notificationManager.activeNotifications.any { it.id == DOWNLOAD_FINISHED_NOTIFICATION_ID }
+            && Build.VERSION.SDK_INT > 24
+            && isNotificationChannelEnabled(DOWNLOAD_FINISHED_CHANNEL_ID)
+        ) {
+            //make summary notification
+            val summaryNotification = getBuilder(DOWNLOAD_WORKER_CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_launcher_foreground_large)
+                .setLargeIcon(bitmap)
+                .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_CHILDREN)
+                .setGroup(DOWNLOAD_FINISHED_NOTIFICATION_ID.toString())
+                .setGroupSummary(true)
+                .build()
+            notificationManager.notify(DOWNLOAD_FINISHED_NOTIFICATION_ID, summaryNotification)
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -364,13 +389,14 @@ class NotificationUtil(var context: Context) {
         notificationBuilder
             .setContentTitle("${res.getString(R.string.failed_download)}: $title")
             .setContentText(error)
-            .setSmallIcon(R.drawable.ic_launcher_foreground_large)
+            .setSmallIcon(R.drawable.baseline_error_24)
             .setLargeIcon(
                 BitmapFactory.decodeResource(
                     res,
-                    R.drawable.ic_launcher_foreground_large
+                    R.drawable.baseline_error_24
                 )
             )
+            .setGroup(DOWNLOAD_ERRORED_NOTIFICATION_ID.toString())
             .setContentIntent(errorTabPendingIntent)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
@@ -381,6 +407,26 @@ class NotificationUtil(var context: Context) {
             notificationBuilder.addAction(0, res.getString(R.string.logs), errorPendingIntent)
         }
         notificationManager.notify(DOWNLOAD_ERRORED_NOTIFICATION_ID + id.toInt(), notificationBuilder.build())
+
+        if (
+            !notificationManager.activeNotifications.any { it.id == DOWNLOAD_ERRORED_NOTIFICATION_ID }
+            && Build.VERSION.SDK_INT > 24
+            && isNotificationChannelEnabled(DOWNLOAD_ERRORED_CHANNEL_ID)
+        ) {
+            //make summary notification
+            val summaryNotification = getBuilder(DOWNLOAD_WORKER_CHANNEL_ID)
+                .setSmallIcon(R.drawable.baseline_error_24)
+                .setLargeIcon(BitmapFactory.decodeResource(
+                    res,
+                    R.drawable.baseline_error_24
+                ))
+                .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_CHILDREN)
+                .setGroup(DOWNLOAD_ERRORED_NOTIFICATION_ID.toString())
+                .setGroupSummary(true)
+                .build()
+            notificationManager.notify(DOWNLOAD_ERRORED_NOTIFICATION_ID, summaryNotification)
+        }
+
     }
 
 
@@ -393,13 +439,16 @@ class NotificationUtil(var context: Context) {
     fun updateDownloadNotification(
         id: Int,
         desc: String,
-        progress: Int,
+        progressRaw: Int,
         queue: Int,
         title: String?,
         channel : String
     ) {
+        var progress = 0
+        if (progressRaw >= 0) {
+            progress = progressRaw
+        }
 
-        val notificationBuilder = getBuilder(channel)
         var contentText = ""
         if (queue > 1) contentText += """${queue - 1} ${resources.getString(R.string.items_left)}""" + "\n"
         contentText += desc.replace("\\[.*?\\] ".toRegex(), "")
@@ -424,13 +473,57 @@ class NotificationUtil(var context: Context) {
         )
 
         try {
-            notificationBuilder.setProgress(100, progress, (progress == 0 || progress == 100))
-                .setContentTitle(title)
-                .setStyle(NotificationCompat.BigTextStyle().bigText(contentText))
-                .clearActions()
-                //.addAction(0, resources.getString(R.string.pause), pauseNotificationPendingIntent)
-                .addAction(0, resources.getString(R.string.cancel), cancelNotificationPendingIntent)
-            notificationManager.notify(id, notificationBuilder.build())
+            if (canPostPromotedNotifications) {
+                val progressStyle = Notification.ProgressStyle()
+                    .setProgressPoints(listOf(
+                        Notification.ProgressStyle.Point(PROGRESS_CURR),
+                        Notification.ProgressStyle.Point(PROGRESS_MAX)
+                    ))
+                    .setProgressTrackerIcon(Icon.createWithResource(context, R.drawable.exomedia_ic_play_arrow_white))
+                    .setProgress(progress)
+                    .setProgressIndeterminate(progress == 0 || progress == 100)
+
+                val pauseAction = Notification.Action.Builder(
+                    Icon.createWithResource(context, android.R.drawable.ic_media_pause),
+                    context.getString(R.string.pause),
+                    pauseNotificationPendingIntent
+                ).build()
+
+                val cancelAction = Notification.Action.Builder(
+                    Icon.createWithResource(context, android.R.drawable.ic_menu_close_clear_cancel),
+                    context.getString(R.string.cancel),
+                    cancelNotificationPendingIntent
+                ).build()
+
+                val builder = Notification.Builder(context, channel)
+                    .setSmallIcon(R.drawable.ic_launcher_foreground_large)
+                    .setContentTitle("$progress%")
+                    .setContentText(title)
+                    .setSubText(contentText)
+                    .setStyle(progressStyle)
+                    .setOngoing(true)
+                    .setOnlyAlertOnce(true)
+                    .setCategory(Notification.CATEGORY_PROGRESS)
+                    //.setRequestPromotedOngoing(true)
+                    .addExtras(Bundle().apply {
+                        // This is the manual flag for "Request Promoted Ongoing"
+                        putBoolean("android.requestPromotedOngoing", true)
+                    })
+                    .addAction(pauseAction)
+                    .addAction(cancelAction)
+
+                notificationManager.notify(id, builder.build())
+            } else {
+                val notificationBuilder = getBuilder(channel)
+                notificationBuilder.setProgress(100, progress, (progress == 0 || progress == 100))
+                    .setContentTitle(title)
+                    .setStyle(NotificationCompat.BigTextStyle().bigText(contentText))
+                    .setGroup(DOWNLOAD_RUNNING_NOTIFICATION_ID.toString())
+                    .clearActions()
+                    .addAction(0, resources.getString(R.string.pause), pauseNotificationPendingIntent)
+                    .addAction(0, resources.getString(R.string.cancel), cancelNotificationPendingIntent)
+                notificationManager.notify(id, notificationBuilder.build())
+            }
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -462,6 +555,7 @@ class NotificationUtil(var context: Context) {
             notificationBuilder.setProgress(100, progress, progress == 0)
                 .setContentTitle(title)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(contentText))
+                .setGroup(DOWNLOAD_TERMINAL_RUNNING_NOTIFICATION_ID.toString())
                 .clearActions()
                 .addAction(0, resources.getString(R.string.cancel), cancelNotificationPendingIntent)
             notificationManager.notify(id, notificationBuilder.build())
@@ -614,6 +708,62 @@ class NotificationUtil(var context: Context) {
     }
 
 
+    fun createDataUpdateNotification(): Notification {
+        val notificationBuilder = getBuilder(DOWNLOAD_MISC_CHANNEL_ID)
+        return notificationBuilder
+            .setContentTitle(resources.getString(R.string.updating_download_data))
+            .setOngoing(true)
+            .setCategory(Notification.CATEGORY_MESSAGE)
+            .setSmallIcon(R.drawable.ic_launcher_foreground_large)
+            .setLargeIcon(
+                BitmapFactory.decodeResource(
+                    resources,
+                    R.drawable.ic_launcher_foreground_large
+                )
+            )
+            .setContentText("")
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .clearActions()
+            .build()
+    }
+
+    @SuppressLint("MissingPermission")
+    fun updateDataUpdateNotification(
+        workID: Int,
+        workTag: String,
+        progress: Int,
+        queue: Int,
+    ) {
+
+        val notificationBuilder = getBuilder(DOWNLOAD_MISC_CHANNEL_ID)
+        val contentText = """${queue - progress} ${resources.getString(R.string.items_left)}"""
+
+
+        val cancelIntent = Intent(context, CancelWorkReceiver::class.java)
+        cancelIntent.putExtra("workTag", workTag)
+        val cancelNotificationPendingIntent = PendingIntent.getBroadcast(
+            context,
+            workID,
+            cancelIntent,
+            PendingIntent.FLAG_IMMUTABLE
+        )
+
+
+        try {
+            notificationBuilder.setProgress(queue, progress, progress == 0)
+                .setContentTitle(resources.getString(R.string.updating_download_data))
+                .setStyle(NotificationCompat.BigTextStyle().bigText(contentText))
+                .clearActions()
+                .addAction(0, resources.getString(R.string.cancel), cancelNotificationPendingIntent)
+            notificationManager.notify(workID, notificationBuilder.build())
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+
     @SuppressLint("MissingPermission")
     fun showFormatsUpdatedNotification(downloadIds: List<Long>) {
         val notificationBuilder = getBuilder(DOWNLOAD_FINISHED_CHANNEL_ID)
@@ -672,6 +822,72 @@ class NotificationUtil(var context: Context) {
         notificationManager.notify(QUERY_PROCESS_FINISHED_NOTIFICATION_ID, notificationBuilder.build())
     }
 
+    @SuppressLint("MissingPermission")
+    fun showNewAppUpdate(version: String) {
+        val notificationBuilder = getBuilder(DOWNLOAD_MISC_CHANNEL_ID)
+
+        val intent = NavDeepLinkBuilder(context)
+            .setGraph(R.navigation.nav_graph)
+            .setDestination(R.id.homeFragment)
+            .createPendingIntent()
+
+        notificationBuilder
+            .setContentTitle(resources.getString(R.string.version_ready_to_download, version))
+            .setSmallIcon(R.drawable.ic_launcher_foreground_large)
+            .setLargeIcon(
+                BitmapFactory.decodeResource(
+                    resources,
+                    R.drawable.ic_launcher_foreground_large
+                )
+            )
+            .setContentIntent(intent)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .clearActions()
+
+        notificationManager.notify(NEW_APP_UPDATE_NOTIFICATION_ID, notificationBuilder.build())
+    }
+
+    @SuppressLint("MissingPermission")
+    fun showNewPackageUpdate(packageName: String, version: String) {
+        val notificationBuilder = getBuilder(DOWNLOAD_MISC_CHANNEL_ID)
+
+        val intent = NavDeepLinkBuilder(context)
+            .setGraph(R.navigation.nav_graph)
+            .setDestination(R.id.homeFragment)
+            .createPendingIntent()
+
+        notificationBuilder
+            .setContentTitle(resources.getString(R.string.package_version_ready_to_download, packageName, version))
+            .setSmallIcon(R.drawable.ic_launcher_foreground_large)
+            .setLargeIcon(
+                BitmapFactory.decodeResource(
+                    resources,
+                    R.drawable.ic_launcher_foreground_large
+                )
+            )
+            .setContentIntent(intent)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .clearActions()
+
+        notificationManager.notify(NEW_PACKAGE_UPDATE_NOTIFICATION_ID, notificationBuilder.build())
+    }
+
+    private fun isNotificationChannelEnabled(channelId: String?): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (!TextUtils.isEmpty(channelId)) {
+                val manager =
+                    context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                val channel = manager.getNotificationChannel(channelId)
+                return channel.importance != NotificationManager.IMPORTANCE_NONE
+            }
+            return false
+        } else {
+            return NotificationManagerCompat.from(context).areNotificationsEnabled()
+        }
+    }
+
     companion object {
         const val DOWNLOAD_SERVICE_CHANNEL_ID = "1"
         const val COMMAND_DOWNLOAD_SERVICE_CHANNEL_ID = "2"
@@ -686,6 +902,10 @@ class NotificationUtil(var context: Context) {
         const val DOWNLOAD_ERRORED_NOTIFICATION_ID =            60000
         const val FORMAT_UPDATING_FINISHED_NOTIFICATION_ID =    70000
         const val QUERY_PROCESS_FINISHED_NOTIFICATION_ID =      80000
+        const val DOWNLOAD_RUNNING_NOTIFICATION_ID =            90000
+        const val DOWNLOAD_TERMINAL_RUNNING_NOTIFICATION_ID =   99000
+        const val NEW_APP_UPDATE_NOTIFICATION_ID =              99900
+        const val NEW_PACKAGE_UPDATE_NOTIFICATION_ID =          99990
 
         private const val PROGRESS_MAX = 100
         private const val PROGRESS_CURR = 0

@@ -8,33 +8,27 @@ import com.deniscerri.ytdl.database.models.ChapterItem
 import com.deniscerri.ytdl.database.models.Format
 import com.deniscerri.ytdl.database.models.ResultItem
 import com.deniscerri.ytdl.database.viewmodel.ResultViewModel
+import com.deniscerri.ytdl.util.Extensions.getIDFromYoutubeURL
 import com.deniscerri.ytdl.util.Extensions.toStringDuration
+import com.deniscerri.ytdl.util.extractors.newpipe.potoken.NewPipePoTokenGenerator
 import com.google.gson.Gson
-import kotlinx.serialization.Serializer
 import okhttp3.OkHttpClient
 import org.json.JSONException
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.Page
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.channel.ChannelInfo
-import org.schabi.newpipe.extractor.channel.ChannelInfoItem
-import org.schabi.newpipe.extractor.channel.ChannelInfoItemExtractor
 import org.schabi.newpipe.extractor.channel.tabs.ChannelTabInfo
 import org.schabi.newpipe.extractor.kiosk.KioskInfo
-import org.schabi.newpipe.extractor.kiosk.KioskList
-import org.schabi.newpipe.extractor.linkhandler.LinkHandler
 import org.schabi.newpipe.extractor.linkhandler.ListLinkHandler
 import org.schabi.newpipe.extractor.localization.ContentCountry
 import org.schabi.newpipe.extractor.localization.Localization
 import org.schabi.newpipe.extractor.playlist.PlaylistInfo
-import org.schabi.newpipe.extractor.search.SearchExtractor
 import org.schabi.newpipe.extractor.search.SearchInfo
-import org.schabi.newpipe.extractor.services.youtube.extractors.YoutubeMusicSearchExtractor
-import org.schabi.newpipe.extractor.services.youtube.extractors.YoutubeSearchExtractor
+import org.schabi.newpipe.extractor.services.youtube.extractors.YoutubeStreamExtractor
 import org.schabi.newpipe.extractor.services.youtube.linkHandler.YoutubeSearchQueryHandlerFactory
 import org.schabi.newpipe.extractor.stream.StreamInfo
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
-import org.schabi.newpipe.extractor.utils.ExtractorHelper
 import java.util.Locale
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -42,13 +36,21 @@ class NewPipeUtil(context: Context) {
     private var sharedPreferences: SharedPreferences = PreferenceManager.getDefaultSharedPreferences(context)
     private val countryCode = sharedPreferences.getString("locale", "")!!.ifEmpty { "US" }
     private val language = sharedPreferences.getString("app_language", "")!!.ifEmpty { "en" }
+    private val useAppLanguageForMetadata = sharedPreferences.getBoolean("use_app_language_for_metadata", false)
+
     init {
-        NewPipe.init(NewPipeDownloaderImpl(OkHttpClient.Builder()), Localization(language, countryCode))
+        if (useAppLanguageForMetadata) {
+            NewPipe.init(NewPipeDownloaderImpl(OkHttpClient.Builder()),  Localization(language, countryCode))
+        } else {
+            NewPipe.init(NewPipeDownloaderImpl(OkHttpClient.Builder()))
+        }
+
+        YoutubeStreamExtractor.setPoTokenProvider(NewPipePoTokenGenerator())
     }
 
     fun getVideoData(url : String) : Result<List<ResultItem>> {
         try {
-            val streamInfo = StreamInfo.getInfo(NewPipe.getService(ServiceList.YouTube.serviceId), url)
+            val streamInfo = StreamInfo.getInfo(url)
             val vid = createVideoFromStream(streamInfo, url) ?: return Result.failure(Throwable())
             return Result.success(listOf(vid))
         }catch (e: Exception) {
@@ -58,8 +60,8 @@ class NewPipeUtil(context: Context) {
 
     fun getFormats(url: String) : Result<List<Format> > {
         try {
-            val streamInfo = StreamInfo.getInfo(NewPipe.getService(ServiceList.YouTube.serviceId), url)
-            val vid = createVideoFromStream(streamInfo, url)
+            val streamInfo = StreamInfo.getInfo(url)
+            val vid = createVideoFromStream(streamInfo, url, true)
             return Result.success(vid!!.formats)
         }catch(e: Exception) {
             println(e)
@@ -72,9 +74,10 @@ class NewPipeUtil(context: Context) {
         return kotlin.runCatching {
             val formatCollection = mutableListOf<MutableList<Format>>()
             urls.forEach { url ->
-                val streamInfo = StreamInfo.getInfo(NewPipe.getService(ServiceList.YouTube.serviceId), url)
-                createVideoFromStream(streamInfo, url).apply {
-                    formatCollection.add(this!!.formats)
+                val streamInfo = StreamInfo.getInfo(url)
+                createVideoFromStream(streamInfo, url, true).apply {
+                    if (this!!.formats.isEmpty()) return Result.failure(Throwable())
+                    formatCollection.add(this.formats.toMutableList())
                     progress(ResultViewModel.MultipleFormatProgress(url, this.formats))
                 }
             }
@@ -137,10 +140,13 @@ class NewPipeUtil(context: Context) {
 
     fun getStreamingUrlAndChapters(url: String) : Result<Pair<List<String>, List<ChapterItem>?>> {
         try {
-            val streamInfo = StreamInfo.getInfo(NewPipe.getService(ServiceList.YouTube.serviceId), url)
-            val item = createVideoFromStream(streamInfo, url)
-            if (item!!.urls.isBlank()) return Result.failure(Throwable())
-            val urls = item.urls.split(",")
+            val streamInfo = StreamInfo.getInfo(url)
+            val item = createVideoFromStream(streamInfo, url)!!
+
+            val videoURL = item.formats.filter { it.vcodec.isNotBlank() && it.vcodec != "none" }.firstOrNull { !it.url.isNullOrBlank() }?.url ?: ""
+            val audioURL = item.formats.filter { it.vcodec.isBlank() || it.vcodec == "none" }.firstOrNull { !it.url.isNullOrBlank() }?.url ?: ""
+
+            val urls = listOf(videoURL, audioURL)
             val chapters = item.chapters
             return Result.success(Pair(urls, chapters))
         }catch (e: Exception) {
@@ -148,8 +154,9 @@ class NewPipeUtil(context: Context) {
         }
     }
 
-    fun getChannelData(url: String, progress: (pagedResults: MutableList<ResultItem>) -> Unit) : Result<List<ResultItem>> {
+    suspend fun getChannelData(url: String, progress: suspend (pagedResults: MutableList<ResultItem>) -> Unit) : Result<List<ResultItem>> {
         try {
+            //return Result.failure(Throwable())
             val req = ChannelInfo.getInfo(ServiceList.YouTube, url)
             println(Gson().toJson(req))
             val items = mutableListOf<ResultItem>()
@@ -169,7 +176,7 @@ class NewPipeUtil(context: Context) {
         }
     }
 
-    private fun getChannelTabData(linkHandler: ListLinkHandler, tabInfo: ChannelTabInfo, channelName: String, playlistURL: String, progress: (pagedResults: MutableList<ResultItem>) -> Unit) : Result<List<ResultItem>> {
+    private suspend fun getChannelTabData(linkHandler: ListLinkHandler, tabInfo: ChannelTabInfo, channelName: String, playlistURL: String, progress: suspend (pagedResults: MutableList<ResultItem>) -> Unit) : Result<List<ResultItem>> {
         try {
             val totalItems = mutableListOf<ResultItem>()
             var nextPage : Page? = null
@@ -214,7 +221,7 @@ class NewPipeUtil(context: Context) {
         }
     }
 
-    fun getPlaylistData(playlistURL: String, progress: (pagedResults: MutableList<ResultItem>) -> Unit) : Result<List<ResultItem>> {
+    suspend fun getPlaylistData(playlistURL: String, progress: suspend (pagedResults: MutableList<ResultItem>) -> Unit) : Result<List<ResultItem>> {
         try {
             val totalItems = mutableListOf<ResultItem>()
             var nextPage : Page? = null
@@ -234,8 +241,6 @@ class NewPipeUtil(context: Context) {
                     nextPage = if (tmp.hasNextPage()) tmp.nextPage else null
                     tmp.items.toList()
                 }
-
-                if (req.isEmpty()) return Result.failure(Throwable())
 
                 for (element in req) {
                     if (element is StreamInfoItem) {
@@ -261,10 +266,16 @@ class NewPipeUtil(context: Context) {
     }
 
 
-     fun getTrending(): ArrayList<ResultItem> {
+    fun getTrending(): ArrayList<ResultItem> {
         try {
             val items = arrayListOf<ResultItem>()
-            val info = KioskInfo.getInfo(NewPipe.getService(ServiceList.YouTube.serviceId), "https://www.youtube.com/feed/trending")
+            val kioskList = NewPipe.getService(ServiceList.YouTube.serviceId).kioskList
+            kioskList.forceContentCountry(ContentCountry(countryCode))
+
+            val extractor = kioskList.getExtractorById("trending_music", null)
+            extractor.fetchPage()
+
+            val info = KioskInfo.getInfo(extractor)
             if (info.relatedItems.isEmpty()) return arrayListOf()
 
             for (i in 0 until info.relatedItems.size) {
@@ -285,7 +296,7 @@ class NewPipeUtil(context: Context) {
     private fun createVideoFromStreamInfoItem(stream: StreamInfoItem, url: String) : ResultItem? {
         var video: ResultItem? = null
         try {
-            val id = getIDFromYoutubeURL(url)
+            val id = url.getIDFromYoutubeURL()
             val title = stream.name
             val author = stream.uploaderName.removeSuffix(" - Topic")
             val duration = stream.duration.toInt().toStringDuration(Locale.US)
@@ -313,7 +324,7 @@ class NewPipeUtil(context: Context) {
     private fun createVideoFromStream(stream: StreamInfo, url: String, ignoreFormatPreference : Boolean = false): ResultItem? {
         var video: ResultItem? = null
         try {
-            val id = getIDFromYoutubeURL(url)
+            val id = url.getIDFromYoutubeURL()
             val title = stream.name
             val author = stream.uploaderName.removeSuffix(" - Topic")
             val duration = stream.duration.toInt().toStringDuration(Locale.US)
@@ -321,24 +332,51 @@ class NewPipeUtil(context: Context) {
             val formats : ArrayList<Format> = ArrayList()
 
 
-            if(sharedPreferences.getString("formats_source", "yt-dlp") == "piped" || ignoreFormatPreference){
+            if(sharedPreferences.getString("formats_source", "yt-dlp") == "newpipe" || ignoreFormatPreference){
                 if (stream.audioStreams.isNotEmpty()){
+                    stream.audioStreams = stream.audioStreams.sortedByDescending { it.bitrate }
                     for (f in 0 until stream.audioStreams.size){
                         val it = stream.audioStreams[f]
-                        if (it.bitrate == 0) continue
+                        if (it.bitrate == 0 || listOf(599, 600).contains(it.itag)) continue
 
                         val formatObj = Format(
                             format_id = it.itag.toString(),
                             container = it.format!!.name,
                             acodec = it.codec,
                             filesize = it.itagItem!!.contentLength,
-                            format_note = (it.audioTrackName ?: (it.itagItem?.getResolutionString() ?: ((it.bitrate / 1000).toString() + "k"))) + " Audio",
+                            format_note = (it.audioTrackName ?: (it.itagItem?.getResolutionString() ?: ((it.bitrate / 1000).toString() + "kbps"))) + " Audio",
                             lang = it.audioLocale?.language,
                             asr = it.itagItem!!.sampleRate.toString(),
                             url = it.content,
-                            tbr = (it.bitrate / 1000).toString() + "k"
+                            tbr = (it.bitrate / 1000).toString() + "k",
                         )
 
+                        formats.add(formatObj)
+                    }
+
+                    val hasDefaultFormat = formats.firstOrNull { it.format_note.contains("ORIGINAL", true) }
+                    if (hasDefaultFormat != null) {
+                        formats.remove(hasDefaultFormat)
+                        formats.add(0, hasDefaultFormat)
+                    }
+                }
+
+                if (stream.videoOnlyStreams.isNotEmpty()){
+                    for (f in 0 until stream.videoOnlyStreams.size){
+                        val it = stream.videoOnlyStreams[f]
+                        if (it.bitrate == 0) continue
+
+                        val formatObj = Format(
+                            format_id = it.itag.toString(),
+                            container = it.format!!.name,
+                            vcodec = it.codec,
+                            format_note = it.itagItem!!.getResolutionString() ?: it.quality,
+                            filesize = it.itagItem!!.contentLength,
+                            url = it.content,
+                            tbr = (it.bitrate / 1000).toString() + "k",
+                            _width = it.width.toString(),
+                            _height = it.height.toString()
+                        )
                         formats.add(formatObj)
                     }
                 }
@@ -355,25 +393,9 @@ class NewPipeUtil(context: Context) {
                             format_note = it.itagItem!!.getResolutionString() ?: it.quality,
                             filesize = it.itagItem!!.contentLength,
                             url = it.content,
-                            tbr = (it.bitrate / 1000).toString() + "k"
-                        )
-                        formats.add(formatObj)
-                    }
-                }
-
-                if (stream.videoOnlyStreams.isNotEmpty()){
-                    for (f in 0 until stream.videoOnlyStreams.size){
-                        val it = stream.videoOnlyStreams[f]
-                        if (it.bitrate == 0) continue
-
-                        val formatObj = Format(
-                            format_id = it.itag.toString(),
-                            container = it.format!!.name,
-                            vcodec = it.codec,
-                            format_note = it.itagItem!!.getResolutionString() ?: it.quality,
-                            filesize = it.itagItem!!.contentLength,
-                            url = it.content,
-                            tbr = (it.bitrate / 1000).toString() + "k"
+                            tbr = (it.bitrate / 1000).toString() + "k",
+                            _width = it.width.toString(),
+                            _height = it.height.toString()
                         )
                         formats.add(formatObj)
                     }
@@ -387,7 +409,6 @@ class NewPipeUtil(context: Context) {
                         defaultLang?.format_id = (defaultLang?.format_id?.split("-")?.get(0) ?: "") + "-${it.value.size-1}"
                     }
                 }
-                formats.sortByDescending { it.filesize }
             }
 
             val chapters = ArrayList<ChapterItem>()
@@ -417,24 +438,4 @@ class NewPipeUtil(context: Context) {
         }
         return video
     }
-
-    private fun getIDFromYoutubeURL(inputQuery: String) : String {
-        var el: Array<String?> =
-            inputQuery.split("/".toRegex()).dropLastWhile { it.isEmpty() }
-                .toTypedArray()
-        var query = el[el.size - 1]
-        if (query!!.contains("watch?v=")) {
-            query = query.substring(8)
-        }
-        el = query.split("&".toRegex()).dropLastWhile { it.isEmpty() }
-            .toTypedArray()
-        query = el[0]
-        el = query!!.split("\\?".toRegex()).dropLastWhile { it.isEmpty() }
-            .toTypedArray()
-        query = el[0]
-        return query!!
-    }
-
-
-
 }

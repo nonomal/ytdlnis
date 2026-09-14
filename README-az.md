@@ -10,13 +10,17 @@
 </div>
 
 <h3 align="center">
-	YTDLnis Android 6.0 və yuxarı üçün yt-dlp istifadə edən pulsuz və açıq mənbəli video/səs yükləyicidir.
+	YTDLnis Android 7.0 və yuxarı üçün yt-dlp istifadə edən pulsuz və açıq mənbəli video/səs yükləyicidir.
 </h3>
+<h4 align="center">
+	Denis Çerri tərəfindən yaradılmışdır
+</h4>
 
 <div align="center">
 
 [![Github Yükləyicisi](https://custom-icon-badges.herokuapp.com/badge/Download-blue?style=for-the-badge&logo=download&logoColor=white)](https://github.com/deniscerri/ytdlnis/releases/latest)
-[![IzzyOnDroid Anbarı](https://custom-icon-badges.herokuapp.com/badge/IzzyOnDroid%20Repo-red?style=for-the-badge&logo=download&logoColor=white)](https://android.izzysoft.de/repo/apk/com.deniscerri.ytdl)
+[![F-Droid](https://custom-icon-badges.herokuapp.com/badge/FDroid-violet?style=for-the-badge&logo=download&logoColor=white)](https://f-droid.org/en/packages/com.deniscerri.ytdl)
+[![IzzyOnDroid Anbarı](https://custom-icon-badges.herokuapp.com/badge/IzzyOnDroid%20Repo-red?style=for-the-badge&logo=download&logoColor=white)](https://apt.izzysoft.de/packages/com.deniscerri.ytdl)
 [![UpToDown](https://custom-icon-badges.herokuapp.com/badge/UpToDown-green?style=for-the-badge&logo=download&logoColor=white)](https://ytdlnis.en.uptodown.com/android/download)
 
 ![CI](https://github.com/deniscerri/ytdlnis/actions/workflows/android.yml/badge.svg?branch=main&event=pull)
@@ -25,10 +29,11 @@
 [![Tərcümə vəziyyəti](https://hosted.weblate.org/widgets/ytdlnis/-/svg-badge.svg)](https://hosted.weblate.org/engage/ytdlnis/?utm_source=widget) 
 [![icma](https://img.shields.io/badge/Discord-YTDLnis-blueviolet?style=flat-square&logo=discord)](https://discord.gg/WW3KYWxAPm) 
 [![icma](https://img.shields.io/badge/Telegram-YTDLnis-blue?style=flat-square&logo=telegram)](https://t.me/ytdlnis)
-[![icma](https://img.shields.io/badge/Telegram-Updates-red?style=flat-square&logo=telegram)](https://t.me/ytdlnisupdates)
+[![icma](https://img.shields.io/badge/Telegram-Updates-red?style=flat-square&logo=telegram)](https://t.me/ytdlnis_updates)
+[![website](https://img.shields.io/badge/Website-orange?style=flat-square&logo=youtube)](https://ytdlnis.org)
+![GitHub Sponsor](https://img.shields.io/github/sponsors/deniscerri?label=Sponsor&logo=GitHub)
 
-
-
+### Yalnız yuxarıdakı keçidlər YTDLnis-in yeganə etibarlı mənbələridir. Qalan hər şey mənimlə əlaqəli deyil. 
 
 </div>
 
@@ -44,7 +49,7 @@
 - yükləmələri növbəyə qoyun və onları tarix və vaxta görə planlaşdırın
 	- eyni vaxtda çoxlu elementi planlaşdıra bilərsiniz
 - eyni vaxtda çoxlu elementi yüklə
-- fərdi əmrlər və şablonlar istifadə edin və ya quraşdırılan sıxac ilə tam yt-dlp rejiminə keçin
+- fərdi əmrlər və şablonlar istifadə edin və ya quraşdırılan konsol ilə tam yt-dlp rejiminə keçin
 	- Siz şablonları nüsxələyə və bərpa edə bilərsiniz, beləcə dostlarınızla paylaşa bilərsiniz
 - Məlumatlar bazası dəstəyi.Hesablarınızla daxil olun və şəxsi/əlçatmaz videoları yüklə, premium formatları kiliddən açın və s.
 - vaxt ştampları və video bölmələri əsasında videoları kəsin (Bu yt-dlp xüsusiyyəti orijinal layihədə təcrübidir)
@@ -69,9 +74,20 @@
 - bitmiş bildirişdən yüklənən faylları aç / paylaş
 - əksər yt-dlp xüsusiyyətləri həyata keçirilir, təkliflər arzu ediləndir
 - Material You görünüşü
-- Tema seçimləri
+- Kolorit seçimləri
 - Nüsxələmə və bərpa xüsusiyyətləri. (Təqribən, hər şey nüsxələnə bilər)
 - MVVM Architecture w/ WorkManager
+
+## 🧩 Plagin Dəstəyi
+
+YTDLnis plaginləri idarə edir, beləliklə istifadəçilər aşağıdakı komponentlərin versiyasını sərbəst şəkildə yüksəldə və ya endirə bilər:
+- Python
+- JS Runtimes (NodeJS, Deno)
+- FFmpeg
+- Aria2c
+
+ytdlnis paketlərini bu depodan quraşdır [ytdlnis-packages](https://github.com/deniscerri/ytdlnis-packages/) və ya tətbiqdəki yeniləmə bölməsi vasitəsilə.
+Ətraflı məlumat üçün deponun README faylına müraciət edin.
 
 ## 📲 Ekran görüntüləri
 
@@ -95,9 +111,9 @@
 
 Müzakirə, elanlar və buraxılışlar üçün [Telegram Kanalımıza](https://t.me/ytdlnis) və ya [Discord](https://discord.gg/WW3KYWxAPm) qoşulun!
 
-## 🔑 ReVanced və LibreTube ilə bağlantı yarat
+## 😇 Töhfə
 
-Tətbiqin paket adı "com.deniscerri.ytdl"
+Əgər töhfə vermək istəyirsinizsə xahiş olunur, [Töhfə vermə](CONTRIBUTING.MD) bölməsin oxuyun.
 
 ## 📝 Weblate-də Tərcümə Etməyə Kömək Et
 <a href="https://hosted.weblate.org/engage/ytdlnis/">
@@ -109,21 +125,54 @@ Tətbiqin paket adı "com.deniscerri.ytdl"
 <img src="https://hosted.weblate.org/widgets/ytdlnis/-/multi-auto.svg" alt="Tərcümə vəziyyəti" />
 </a>
 
-## 😇 Töhfə
+## 🔑 Paket adın istifadə edərək üçüncü tərəf tətbiqlərlə əlaqə qurun
 
-Əgər töhfə vermək istəyirsinizsə xahiş olunur, [Töhfə vermə](CONTRIBUTING.MD) bölməsin oxuyun.
+Tətbiqin paket adı "com.deniscerri.ytdl"-dir.
+
+## 🔍 Tətbiq imzasın təsdiqləmə
+
+Tətbiq aşağıdakı imzanı ehtiva etməlidir. Github iş axını fəaliyyəti bunu istifadə edir və buraxılışlar onu yenilənən quruluş halına gətirmək üçün buna əsaslanır.
+İmza fərqlidirsə, üçüncü tərəf paylayıcınız tətbiqi dəyişdirib. Xahiş olunur, tətbiqi əsil imza ilə istifadə edin.
+```
+Signer #1 certificate DN: CN=Denis Cerri, OU=Personal, O=Personal, L=Albania, ST=Albania, C=AL
+Signer #1 certificate SHA-256 digest: 263645cb5272eb290759fe1f59149ae24df6ce171e9f6666eead981d3fc64c95
+Signer #1 certificate SHA-1 digest: 2fec9c2fcef68d29a60857e185c795fec5f56fb6
+Signer #1 certificate MD5 digest: 429d0c6315d2f99650f66cc44cf5a794
+```
+
+
+## 🤖 İntent-lər istifadə edərək üçüncü tərəf tətbiqləri ilə əlaqə qurun
+
+Siz istifadəçi toxunuşu olmadan yükləmələri həyata keçirmək üçün tətbiqə əmrlər göndərmək niyyətin (İntent) istifadə edə bilərsiniz. Qəbul edilən dəyişkənliklər:
+
+<b>TYPE</b> -> bu ola bilər: səs,video,əmr <br/>
+<b>BACKGROUND</b> -> bu ola bilər: true,false. Əgər bu true olarsa, tətbiq istənilən halda yükləmə kartını göstərməyəcək və yükləməni arxa planda həyata keçirəcək <br/>
+
+### Tasker ilə fonda səs elementin yüklənilməsi nümunəsi
+1. Göndərmə Intent tapşırığı yaradın 
+2. Action (Fəaliyyət): android.intent.action.SEND
+3. Cat: İlkin (default)
+4. Mime Type: text/*
+5. Əlavə (Extra): android.intent.extra.TEXT:url ("url" əvəzinə yükləmək istədiyiniz videonun URL-ni yazın)
+6. Əlavə(Extra): TYPE:audio
+7. Əlavə(Extra): BACKGROUND:true
 
 ## 📄 Lisenziya
 
 [GNU GPL v3.0](https://github.com/deniscerri/ytdlnis/blob/main/LICENSE)
 
-⚠️  Xəbərdarlıq <br>
+GPLv3 lisenziyası ilə lisenziyalaşdırılan mənbə kodu istisna olmaqla, bütün digər tərəflərə "YTDLnis" adın yükləyici tətbiq kimi istifadə etmək qadağandır və eynisi onun törəmələri üçün də keçərlidir. Törəmələrə fork-lar və qeyri-rəsmi quruluşlar daxildir, lakin bunlarla məhdudlaşmır.
 
-GPLv3 lisenziyası ilə lisenziyalaşdırılan mənbə kodu istisna olmaqla, bütün digər tərəflərə "YTDLnis" adın yükləyici tətbiq kimi istifadə etmək qadağandır və eynisi onun törəmələri üçün də keçərlidir. Törəmələrə çəngəllər və qeyri-rəsmi quruluşlar daxildir, lakin bunlarla məhdudlaşmır.
+## 😁 İanə Edin
+
+
+[<img src="https://raw.githubusercontent.com/WSTxda/WSTxda/main/images/BMC.svg"
+alt='Donate with BMC'
+height="80">](https://www.buymeacoffee.com/deniscerri)
 
 ## 🙏 Təşəkkürlər
 
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp) və bu aləti mümkün etmək üçün töhfəçiləri. Bunsuz bu tətbiq mövcud olmazdı.
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) və bu aləti mümkün etmək üçün töhfəçilərə. Bunsuz bu tətbiq mövcud olmazdı.
 - [youtubedl-android](https://github.com/yausername/youtubedl-android) yt-dlp-ni Android-ə köçürmək üçün
 - [dvd](https://github.com/yausername/dvd) Sizə youtubedl-android alətin göstərmək üçün
 - [seal](https://github.com/JunkFood02/Seal) müəyyən dizayn elementləri və xüsusiyyətləri üçün bu tətbiqdə də istifadə etmək istədim

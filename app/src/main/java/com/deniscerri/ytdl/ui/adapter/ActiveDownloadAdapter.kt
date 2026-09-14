@@ -1,6 +1,5 @@
 package com.deniscerri.ytdl.ui.adapter
 
-import android.animation.ValueAnimator
 import android.app.Activity
 import android.content.SharedPreferences
 import android.os.Handler
@@ -10,19 +9,16 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
-import androidx.core.content.ContextCompat
-import androidx.core.view.isVisible
 import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.AsyncDifferConfig
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.deniscerri.ytdl.R
+import com.deniscerri.ytdl.database.enums.DownloadType
 import com.deniscerri.ytdl.database.models.DownloadItem
 import com.deniscerri.ytdl.database.repository.DownloadRepository
-import com.deniscerri.ytdl.database.viewmodel.DownloadViewModel
-import com.deniscerri.ytdl.util.Extensions.dp
-import com.deniscerri.ytdl.util.Extensions.loadThumbnail
+import com.deniscerri.ytdl.util.Extensions.loadBlurryThumbnail
 import com.deniscerri.ytdl.util.FileUtil
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
@@ -66,13 +62,11 @@ class ActiveDownloadAdapter(onItemClickListener: OnItemClickListener, activity: 
 
         // THUMBNAIL ----------------------------------
         val hideThumb = sharedPreferences.getStringSet("hide_thumbnails", emptySet())!!.contains("queue")
-        uiHandler.post { thumbnail.loadThumbnail(hideThumb, item.thumb) }
+        uiHandler.post { thumbnail.loadBlurryThumbnail(activity, hideThumb, item.thumb) }
 
         // PROGRESS BAR ----------------------------------------------------
         val progressBar = card.findViewById<LinearProgressIndicator>(R.id.progress)
         progressBar.tag = "${item.id}##progress"
-        progressBar.progress = 0
-        progressBar.isIndeterminate = true
 
         // TITLE  ----------------------------------
         val itemTitle = card.findViewById<TextView>(R.id.title)
@@ -93,9 +87,9 @@ class ActiveDownloadAdapter(onItemClickListener: OnItemClickListener, activity: 
 
         val type = card.findViewById<MaterialButton>(R.id.download_type)
         when(item.type){
-            DownloadViewModel.Type.audio -> type.setIconResource(R.drawable.ic_music)
-            DownloadViewModel.Type.video -> type.setIconResource(R.drawable.ic_video)
-            DownloadViewModel.Type.command -> type.setIconResource(R.drawable.ic_terminal)
+            DownloadType.audio -> type.setIconResource(R.drawable.ic_music)
+            DownloadType.video -> type.setIconResource(R.drawable.ic_video)
+            DownloadType.command -> type.setIconResource(R.drawable.ic_terminal)
             else -> {}
         }
 
@@ -106,12 +100,13 @@ class ActiveDownloadAdapter(onItemClickListener: OnItemClickListener, activity: 
         sideDetails.add(item.container.uppercase().ifEmpty { item.format.container.uppercase() })
 
         val fileSize = FileUtil.convertFileSize(item.format.filesize)
-        if (fileSize != "?") sideDetails.add(fileSize)
+        if (fileSize != "?" && item.downloadSections.isBlank()) sideDetails.add(fileSize)
         formatDetailsChip.text = sideDetails.filter { it.isNotBlank() }.joinToString("  ·  ")
 
         //OUTPUT
         val output = card.findViewById<TextView>(R.id.output)
         output.tag = "${item.id}##output"
+        output.text = ""
 
         output.setOnClickListener {
             onItemClickListener.onOutputClick(item)
@@ -122,39 +117,39 @@ class ActiveDownloadAdapter(onItemClickListener: OnItemClickListener, activity: 
         if (cancelButton.hasOnClickListeners()) cancelButton.setOnClickListener(null)
         cancelButton.setOnClickListener {onItemClickListener.onCancelClick(item.id)}
 
-//        val resumeButton = card.findViewById<MaterialButton>(R.id.active_download_resume)
-//        resumeButton.isEnabled = true
-//        if (resumeButton.hasOnClickListeners()) resumeButton.setOnClickListener(null)
-//        if (activePaused) {
-//            resumeButton.setIconResource(R.drawable.exomedia_ic_play_arrow_white)
-//            resumeButton.setOnClickListener {
-//                resumeButton.isEnabled = false
-//                onItemClickListener.onResumeClick(item.id)
-//            }
-//        }else {
-//            resumeButton.setIconResource(R.drawable.exomedia_ic_pause_white)
-//            resumeButton.setOnClickListener {
-//                resumeButton.isEnabled = false
-//                onItemClickListener.onPauseClick(item.id)
-//            }
-//        }
+        val resumeButton = card.findViewById<MaterialButton>(R.id.active_download_resume)
+        resumeButton.isEnabled = true
+        if (resumeButton.hasOnClickListeners()) resumeButton.setOnClickListener(null)
+        val isPaused = item.status == DownloadRepository.Status.Paused.toString()
+        if (isPaused) {
+            resumeButton.setIconResource(R.drawable.exomedia_ic_play_arrow_white)
+            resumeButton.setOnClickListener {
+                resumeButton.isEnabled = false
+                onItemClickListener.onResumeClick(item.id)
+            }
+        }else {
+            resumeButton.setIconResource(R.drawable.exomedia_ic_pause_white)
+            resumeButton.setOnClickListener {
+                resumeButton.isEnabled = false
+                onItemClickListener.onPauseClick(item.id)
+            }
+        }
 
-        if (sharedPreferences.getBoolean("paused_downloads", false)) {
+        if (isPaused) {
             progressBar.isIndeterminate = false
+            progressBar.progress = 0
             cancelButton.isEnabled = true
             output.text = activity.getString(R.string.exo_download_paused)
         }else{
-            progressBar.isIndeterminate = true
+            progressBar.isIndeterminate = progressBar.progress <= 0
             cancelButton.isEnabled = true
         }
     }
     interface OnItemClickListener {
         fun onCancelClick(itemID: Long)
         fun onOutputClick(item: DownloadItem)
-    }
-
-    enum class ActiveDownloadAction {
-        Resume, Pause
+        fun onPauseClick(itemID: Long)
+        fun onResumeClick(itemID: Long)
     }
 
     companion object {

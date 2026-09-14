@@ -7,35 +7,25 @@ import androidx.lifecycle.LiveData
 import androidx.lifecycle.asLiveData
 import androidx.lifecycle.viewModelScope
 import androidx.preference.PreferenceManager
-import androidx.work.Constraints
-import androidx.work.Data
-import androidx.work.ExistingWorkPolicy
-import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.PeriodicWorkRequest
-import androidx.work.PeriodicWorkRequestBuilder
-import androidx.work.WorkManager
 import com.deniscerri.ytdl.database.DBManager
 import com.deniscerri.ytdl.database.models.observeSources.ObserveSourcesItem
 import com.deniscerri.ytdl.database.repository.ObserveSourcesRepository
-import com.deniscerri.ytdl.work.ObserveSourceWorker
+import com.deniscerri.ytdl.database.repository.ResultRepository
+import com.deniscerri.ytdl.util.ObserveAlarmScheduler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import java.util.Calendar
-import java.util.concurrent.TimeUnit
 
 class ObserveSourcesViewModel(private val application: Application) : AndroidViewModel(application) {
     private val repository: ObserveSourcesRepository
     val items: LiveData<List<ObserveSourcesItem>>
-    private val workManager : WorkManager
     private val preferences : SharedPreferences
+    private val alarmScheduler = ObserveAlarmScheduler(application)
 
     init {
         val dao = DBManager.getInstance(application).observeSourcesDao
+        preferences = PreferenceManager.getDefaultSharedPreferences(application)
         repository = ObserveSourcesRepository(dao)
         items = repository.items.asLiveData()
-        workManager = WorkManager.getInstance(application)
-        preferences = PreferenceManager.getDefaultSharedPreferences(application)
     }
 
     fun getAll(): List<ObserveSourcesItem> {
@@ -50,29 +40,32 @@ class ObserveSourcesViewModel(private val application: Application) : AndroidVie
         return repository.getByID(id)
     }
 
-    suspend fun insert(item: ObserveSourcesItem) : Long {
+    suspend fun insertUpdate(item: ObserveSourcesItem) : Long {
         if (item.id > 0) {
             repository.update(item)
-            observeTask(item)
+            alarmScheduler.schedule(item)
             return item.id
         }
 
         val id = repository.insert(item)
         item.id = id
-        if (id > 0) observeTask(item)
+        if (id > 0) alarmScheduler.schedule(item)
         return id
     }
 
+    suspend fun stopObserving(item: ObserveSourcesItem) {
+        item.status = ObserveSourcesRepository.SourceStatus.STOPPED
+        repository.update(item)
+        alarmScheduler.cancel(item.id)
+    }
+
     fun delete(item: ObserveSourcesItem) = viewModelScope.launch(Dispatchers.IO) {
-        runCatching { cancelObservationTaskByID(item.id) }
+        runCatching {  alarmScheduler.cancel(item.id) }
         repository.delete(item)
     }
 
     fun deleteAll() = viewModelScope.launch(Dispatchers.IO) {
-        getAll().forEach {
-            runCatching { cancelObservationTaskByID(it.id) }
-        }
-
+        getAll().forEach { runCatching { alarmScheduler.cancel(it.id) } }
         repository.deleteAll()
     }
 
@@ -80,75 +73,30 @@ class ObserveSourcesViewModel(private val application: Application) : AndroidVie
         repository.update(item)
     }
 
-    private fun cancelObservationTaskByID(id: Long){
-        workManager.cancelAllWorkByTag(id.toString())
+    suspend fun resetProcessedLinks(item: ObserveSourcesItem) {
+        item.alreadyProcessedLinks = mutableListOf()
+        item.ignoredLinks = mutableListOf()
+        update(item)
     }
 
-
-
-    private fun observeTask(it: ObserveSourcesItem){
-        cancelObservationTaskByID(it.id)
-
-        Calendar.getInstance().apply {
-            timeInMillis = it.startsTime
-
-            if (it.everyCategory != ObserveSourcesRepository.EveryCategory.HOUR){
-                val hourMin = Calendar.getInstance()
-                hourMin.timeInMillis = it.everyTime
-                set(Calendar.HOUR_OF_DAY, hourMin.get(Calendar.HOUR_OF_DAY))
-                set(Calendar.MINUTE, hourMin.get(Calendar.MINUTE))
-            }
-
-            when(it.everyCategory){
-                ObserveSourcesRepository.EveryCategory.HOUR -> {}
-                ObserveSourcesRepository.EveryCategory.DAY -> {}
-                ObserveSourcesRepository.EveryCategory.WEEK -> {
-                    var weekDayNr = get(Calendar.DAY_OF_WEEK) - 1
-                    if (weekDayNr == 0) weekDayNr = 7
-                    val followingWeekDay = it.weeklyConfig?.weekDays?.firstOrNull { it >= weekDayNr }
-                    if (followingWeekDay == null){
-                        add(Calendar.DAY_OF_MONTH,
-                            it.weeklyConfig?.weekDays?.minBy { it }?.plus((7 - weekDayNr)) ?: 0)
-                    }else{
-                        add(Calendar.DAY_OF_MONTH, followingWeekDay - weekDayNr)
-                    }
-                }
-                ObserveSourcesRepository.EveryCategory.MONTH -> {
-                    val currentMonthIndex = get(Calendar.MONTH)
-                    if (it.monthlyConfig?.startsMonth != currentMonthIndex){
-                        set(Calendar.MONTH, it.monthlyConfig?.startsMonth ?: 0)
-                        if (timeInMillis < Calendar.getInstance().timeInMillis){
-                            add(Calendar.YEAR, 1)
-                        }
-                    }
-                }
-            }
-
-            //schedule for next time
-            val sharedPreferences = PreferenceManager.getDefaultSharedPreferences(application)
-            val allowMeteredNetworks = sharedPreferences.getBoolean("metered_networks", true)
-
-            val workConstraints = Constraints.Builder()
-            if (!allowMeteredNetworks) workConstraints.setRequiredNetworkType(NetworkType.UNMETERED)
-            else {
-                workConstraints.setRequiredNetworkType(NetworkType.CONNECTED)
-            }
-
-            val workRequest = OneTimeWorkRequestBuilder<ObserveSourceWorker>()
-                .addTag("observeSources")
-                .addTag(it.id.toString())
-                .setConstraints(workConstraints.build())
-                .setInitialDelay(timeInMillis - System.currentTimeMillis(), TimeUnit.MILLISECONDS)
-                .setInputData(Data.Builder().putLong("id", it.id).build())
-
-            workManager.enqueueUniqueWork(
-                "OBSERVE${it.id}",
-                ExistingWorkPolicy.REPLACE,
-                workRequest.build()
-            )
-        }
-
+    suspend fun clearIgnoredLinks(item: ObserveSourcesItem) {
+        item.ignoredLinks = mutableListOf()
+        update(item)
     }
 
+    suspend fun resetRunCount(item: ObserveSourcesItem) {
+        item.runCount = 0
+        update(item)
+    }
 
+    suspend fun markCurrentAsProcessed(item: ObserveSourcesItem) {
+        val db = DBManager.getInstance(application)
+        val resultRepo = ResultRepository(db.resultDao, db.commandTemplateDao, application)
+        val urls = runCatching {
+            resultRepo.getResultsFromSource(item.url, resetResults = false, addToResults = false, singleItem = false)
+        }.getOrElse { emptyList() }.map { it.url }
+        item.alreadyProcessedLinks = urls.toMutableList()
+        item.ignoredLinks = mutableListOf()
+        repository.update(item)
+    }
 }

@@ -12,11 +12,15 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
+import android.widget.PopupMenu
 import android.widget.RelativeLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.view.ActionMode
+import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.os.bundleOf
+import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
@@ -25,11 +29,12 @@ import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.RecyclerView
-import com.afollestad.materialdialogs.utils.MDUtil.getStringArray
 import com.deniscerri.ytdl.R
 import com.deniscerri.ytdl.database.models.DownloadItem
 import com.deniscerri.ytdl.database.repository.DownloadRepository
+import com.deniscerri.ytdl.database.viewmodel.DownloadCardViewModel
 import com.deniscerri.ytdl.database.viewmodel.DownloadViewModel
+import com.deniscerri.ytdl.database.viewmodel.YTDLPViewModel
 import com.deniscerri.ytdl.ui.adapter.GenericDownloadAdapter
 import com.deniscerri.ytdl.util.Extensions.enableFastScroll
 import com.deniscerri.ytdl.util.Extensions.forceFastScrollMode
@@ -53,12 +58,18 @@ class CancelledDownloadsFragment : Fragment(), GenericDownloadAdapter.OnItemClic
     private var fragmentView: View? = null
     private var activity: Activity? = null
     private lateinit var downloadViewModel : DownloadViewModel
+    private lateinit var ytdlpViewModel : YTDLPViewModel
+    private lateinit var downloadCardViewModel : DownloadCardViewModel
     private lateinit var cancelledRecyclerView : RecyclerView
     private lateinit var preferences : SharedPreferences
     private lateinit var adapter : GenericDownloadAdapter
     private lateinit var noResults : RelativeLayout
     private var actionMode : ActionMode? = null
     private var totalSize = 0
+
+    private lateinit var listHeader : ConstraintLayout
+    private lateinit var count : TextView
+    private lateinit var headerMenuBtn : TextView
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -68,11 +79,13 @@ class CancelledDownloadsFragment : Fragment(), GenericDownloadAdapter.OnItemClic
         fragmentView = inflater.inflate(R.layout.generic_list, container, false)
         activity = getActivity()
         downloadViewModel = ViewModelProvider(requireActivity())[DownloadViewModel::class.java]
+        ytdlpViewModel = ViewModelProvider(requireActivity())[YTDLPViewModel::class.java]
+        downloadCardViewModel = ViewModelProvider(requireActivity())[DownloadCardViewModel::class.java]
         preferences = PreferenceManager.getDefaultSharedPreferences(requireContext())
         return fragmentView
     }
 
-    @SuppressLint("RestrictedApi")
+    @SuppressLint("RestrictedApi", "SetTextI18n")
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
@@ -87,7 +100,7 @@ class CancelledDownloadsFragment : Fragment(), GenericDownloadAdapter.OnItemClic
         cancelledRecyclerView.forceFastScrollMode()
         cancelledRecyclerView.adapter = adapter
         cancelledRecyclerView.enableFastScroll()
-        if (preferences.getStringSet("swipe_gesture", requireContext().getStringArray(R.array.swipe_gestures_values).toSet())!!.toList().contains("cancelled")){
+        if (preferences.getStringSet("swipe_gesture", requireContext().resources.getStringArray(R.array.swipe_gestures_values).toSet())!!.toList().contains("cancelled")){
             val itemTouchHelper = ItemTouchHelper(simpleCallback)
             itemTouchHelper.attachToRecyclerView(cancelledRecyclerView)
         }
@@ -100,8 +113,39 @@ class CancelledDownloadsFragment : Fragment(), GenericDownloadAdapter.OnItemClic
             }
         }
 
+        listHeader = view.findViewById(R.id.list_header)
+        count = view.findViewById(R.id.count)
+        headerMenuBtn = view.findViewById(R.id.dropdown_menu)
+
+        headerMenuBtn.setOnClickListener {
+            val popup = PopupMenu(activity, it)
+            popup.menuInflater.inflate(R.menu.cancelled_header_menu, popup.menu)
+            popup.setOnMenuItemClickListener { m ->
+                when(m.itemId){
+                    R.id.delete_all -> {
+                        UiUtil.showGenericDeleteAllDialog(requireContext()) {
+                            downloadViewModel.deleteCancelled()
+                        }
+                    }
+                    R.id.copy_urls -> {
+                        lifecycleScope.launch {
+                            val urls = withContext(Dispatchers.IO){
+                                downloadViewModel.getURLsByStatus(listOf(DownloadRepository.Status.Cancelled))
+                            }
+                            UiUtil.copyToClipboard(urls.joinToString("\n"), requireActivity())
+                        }
+                    }
+                }
+                true
+            }
+
+            popup.show()
+        }
+
         downloadViewModel.getTotalSize(listOf(DownloadRepository.Status.Cancelled)).observe(viewLifecycleOwner){
             totalSize = it
+            listHeader.isVisible = it > 0
+            count.text = "$it ${getString(R.string.items)}"
             noResults.visibility = if (it == 0) View.VISIBLE else View.GONE
         }
     }
@@ -115,6 +159,7 @@ class CancelledDownloadsFragment : Fragment(), GenericDownloadAdapter.OnItemClic
                 withContext(Dispatchers.IO){
                     downloadViewModel.queueDownloads(listOf(item), true)
                 }
+                actionMode?.finish()
             }.onFailure {
                 Toast.makeText(requireContext(), getString(R.string.error_restarting_download), Toast.LENGTH_LONG).show()
             }
@@ -131,6 +176,8 @@ class CancelledDownloadsFragment : Fragment(), GenericDownloadAdapter.OnItemClic
                 item,
                 requireActivity(),
                 DownloadRepository.Status.valueOf(item.status),
+                ytdlpViewModel,
+                preferences,
                 removeItem = { it: DownloadItem, sheet: BottomSheetDialog ->
                     removeItem(it, sheet)
                 },
@@ -140,9 +187,10 @@ class CancelledDownloadsFragment : Fragment(), GenericDownloadAdapter.OnItemClic
                     }
                 },
                 longClickDownloadButton = {
+                    downloadCardViewModel.setResultItem(downloadViewModel.createResultItemFromDownload(it))
+                    downloadCardViewModel.setDownloadItem(it)
+
                     findNavController().navigate(R.id.downloadBottomSheetDialog, bundleOf(
-                        Pair("downloadItem", it),
-                        Pair("result", downloadViewModel.createResultItemFromDownload(it)),
                         Pair("type", it.type)
                         )
                     )
@@ -205,6 +253,7 @@ class CancelledDownloadsFragment : Fragment(), GenericDownloadAdapter.OnItemClic
         override fun onCreateActionMode(mode: ActionMode?, menu: Menu?): Boolean {
             mode!!.menuInflater.inflate(R.menu.cancelled_downloads_menu_context, menu)
             mode.title = "${adapter.getSelectedObjectsCount(totalSize)} ${getString(R.string.selected)}"
+            headerMenuBtn.isEnabled = false
             return true
         }
 
@@ -256,10 +305,31 @@ class CancelledDownloadsFragment : Fragment(), GenericDownloadAdapter.OnItemClic
                     }
                     val showDownloadCard = preferences.getBoolean("download_card", true)
                     if (showDownloadCard) {
-                        downloadViewModel.turnDownloadItemsToProcessingDownloads(selectedObjects)
-                        val bundle = Bundle()
-                        bundle.putLongArray("currentDownloadIDs", selectedObjects.toLongArray())
-                        findNavController().navigate(R.id.downloadMultipleBottomSheetDialog2, bundle)
+                        lifecycleScope.launch {
+                            if (selectedObjects.size == 1) {
+                                val itm = withContext(Dispatchers.IO){
+                                    downloadViewModel.getItemByID(selectedObjects.first())
+                                }
+
+                                downloadCardViewModel.setResultItem(downloadViewModel.createResultItemFromDownload(itm))
+                                downloadCardViewModel.setDownloadItem(itm)
+
+                                withContext(Dispatchers.Main) {
+                                    findNavController().navigate(R.id.downloadBottomSheetDialog, bundleOf(
+                                        Pair("type", itm.type)
+                                    ))
+                                }
+                            }else {
+                                CoroutineScope(SupervisorJob()).launch(Dispatchers.IO) {
+                                    downloadViewModel.turnDownloadItemsToProcessingDownloads(selectedObjects)
+                                }
+                                withContext(Dispatchers.Main){
+                                    val bundle = Bundle()
+                                    bundle.putLongArray("currentDownloadIDs", selectedObjects.toLongArray())
+                                    findNavController().navigate(R.id.downloadMultipleBottomSheetDialog2, bundle)
+                                }
+                            }
+                        }
                     }else {
                         downloadViewModel.reQueueDownloadItems(selectedObjects)
                     }
@@ -300,6 +370,7 @@ class CancelledDownloadsFragment : Fragment(), GenericDownloadAdapter.OnItemClic
         override fun onDestroyActionMode(mode: ActionMode?) {
             actionMode = null
             adapter.clearCheckedItems()
+            headerMenuBtn.isEnabled = true
         }
 
         suspend fun getSelectedIDs() : List<Long>{
@@ -331,7 +402,7 @@ class CancelledDownloadsFragment : Fragment(), GenericDownloadAdapter.OnItemClic
                                 downloadViewModel.getItemByID(itemID)
                             }
                             downloadViewModel.deleteDownload(deletedItem.id)
-                            Snackbar.make(cancelledRecyclerView, getString(R.string.you_are_going_to_delete) + ": " + deletedItem.title.ifEmpty { deletedItem.url }, Snackbar.LENGTH_LONG)
+                            Snackbar.make(cancelledRecyclerView, getString(R.string.you_are_going_to_delete) + ": " + deletedItem.title.ifEmpty { deletedItem.url }, Snackbar.LENGTH_INDEFINITE)
                                 .setAction(getString(R.string.undo)) {
                                     downloadViewModel.insert(deletedItem)
                                 }.show()

@@ -12,11 +12,15 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
+import android.widget.PopupMenu
 import android.widget.RelativeLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.view.ActionMode
+import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.os.bundleOf
+import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
@@ -25,19 +29,16 @@ import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.RecyclerView
-import androidx.work.WorkManager
-import com.afollestad.materialdialogs.utils.MDUtil.getStringArray
 import com.deniscerri.ytdl.R
 import com.deniscerri.ytdl.database.models.DownloadItem
 import com.deniscerri.ytdl.database.repository.DownloadRepository
+import com.deniscerri.ytdl.database.viewmodel.DownloadCardViewModel
 import com.deniscerri.ytdl.database.viewmodel.DownloadViewModel
-import com.deniscerri.ytdl.ui.adapter.GenericDownloadAdapter
+import com.deniscerri.ytdl.database.viewmodel.YTDLPViewModel
 import com.deniscerri.ytdl.ui.adapter.ScheduledDownloadAdapter
 import com.deniscerri.ytdl.util.Extensions.enableFastScroll
 import com.deniscerri.ytdl.util.Extensions.forceFastScrollMode
-import com.deniscerri.ytdl.util.Extensions.toListString
 import com.deniscerri.ytdl.util.UiUtil
-import com.deniscerri.ytdl.work.AlarmScheduler
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.color.MaterialColors
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -54,12 +55,18 @@ class ScheduledDownloadsFragment : Fragment(), ScheduledDownloadAdapter.OnItemCl
     private var fragmentView: View? = null
     private var activity: Activity? = null
     private lateinit var downloadViewModel : DownloadViewModel
+    private lateinit var ytdlpViewModel : YTDLPViewModel
+    private lateinit var downloadCardViewModel : DownloadCardViewModel
     private lateinit var scheduledRecyclerView : RecyclerView
     private lateinit var preferences : SharedPreferences
     private lateinit var adapter : ScheduledDownloadAdapter
     private lateinit var noResults : RelativeLayout
     private var actionMode : ActionMode? = null
     private var totalSize = 0
+
+    private lateinit var listHeader : ConstraintLayout
+    private lateinit var count : TextView
+    private lateinit var headerMenuBtn : TextView
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -69,11 +76,13 @@ class ScheduledDownloadsFragment : Fragment(), ScheduledDownloadAdapter.OnItemCl
         fragmentView = inflater.inflate(R.layout.generic_list, container, false)
         activity = getActivity()
         downloadViewModel = ViewModelProvider(this)[DownloadViewModel::class.java]
+        ytdlpViewModel = ViewModelProvider(this)[YTDLPViewModel::class.java]
+        downloadCardViewModel = ViewModelProvider(requireActivity())[DownloadCardViewModel::class.java]
         preferences = PreferenceManager.getDefaultSharedPreferences(requireContext())
         return fragmentView
     }
 
-    @SuppressLint("RestrictedApi")
+    @SuppressLint("RestrictedApi", "SetTextI18n")
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
@@ -88,7 +97,7 @@ class ScheduledDownloadsFragment : Fragment(), ScheduledDownloadAdapter.OnItemCl
         scheduledRecyclerView.forceFastScrollMode()
         scheduledRecyclerView.adapter = adapter
         scheduledRecyclerView.enableFastScroll()
-        if (preferences.getStringSet("swipe_gesture", requireContext().getStringArray(R.array.swipe_gestures_values).toSet())!!.toList().contains("scheduled")){
+        if (preferences.getStringSet("swipe_gesture", requireContext().resources.getStringArray(R.array.swipe_gestures_values).toSet())!!.toList().contains("scheduled")){
             val itemTouchHelper = ItemTouchHelper(simpleCallback)
             itemTouchHelper.attachToRecyclerView(scheduledRecyclerView)
         }
@@ -101,9 +110,47 @@ class ScheduledDownloadsFragment : Fragment(), ScheduledDownloadAdapter.OnItemCl
             }
         }
 
+        listHeader = view.findViewById(R.id.list_header)
+        count = view.findViewById(R.id.count)
+        headerMenuBtn = view.findViewById(R.id.dropdown_menu)
+
+        headerMenuBtn.setOnClickListener {
+            val popup = PopupMenu(activity, it)
+            popup.menuInflater.inflate(R.menu.scheduled_header_menu, popup.menu)
+            popup.setOnMenuItemClickListener { m ->
+                when(m.itemId){
+                    R.id.download_now -> {
+                        lifecycleScope.launch {
+                            withContext(Dispatchers.IO){
+                                downloadViewModel.resetScheduleItemForAllScheduledItemsAndStartDownload()
+                            }
+                        }
+                    }
+                    R.id.delete_all -> {
+                        UiUtil.showGenericDeleteAllDialog(requireContext()) {
+                            downloadViewModel.deleteScheduled()
+                        }
+                    }
+                    R.id.copy_urls -> {
+                        lifecycleScope.launch {
+                            val urls = withContext(Dispatchers.IO){
+                                downloadViewModel.getURLsByStatus(listOf(DownloadRepository.Status.Scheduled))
+                            }
+                            UiUtil.copyToClipboard(urls.joinToString("\n"), requireActivity())
+                        }
+                    }
+                }
+                true
+            }
+
+            popup.show()
+        }
+
         lifecycleScope.launch {
             downloadViewModel.scheduledDownloadsCount.collectLatest {
                 totalSize = it
+                listHeader.isVisible = it > 0
+                count.text = "$it ${getString(R.string.items)}"
                 noResults.visibility = if (it == 0) View.VISIBLE else View.GONE
             }
         }
@@ -119,6 +166,7 @@ class ScheduledDownloadsFragment : Fragment(), ScheduledDownloadAdapter.OnItemCl
             }.onFailure {
                 Toast.makeText(requireContext(), it.message, Toast.LENGTH_LONG).show()
             }
+            actionMode?.finish()
         }
     }
 
@@ -132,33 +180,32 @@ class ScheduledDownloadsFragment : Fragment(), ScheduledDownloadAdapter.OnItemCl
                 item,
                 requireActivity(),
                 DownloadRepository.Status.valueOf(item.status),
+                ytdlpViewModel,
+                preferences,
                 removeItem = { it: DownloadItem, sheet: BottomSheetDialog ->
                     sheet.hide()
                     removeItem(it, sheet)
                 },
                 downloadItem = {
-                    downloadViewModel.deleteDownload(it.id)
                     it.downloadStartTime = 0
                     runBlocking {
-                        downloadViewModel.queueDownloads(listOf(it))
+                        downloadViewModel.queueDownloads(listOf(it), ignoreDuplicates = true)
                     }
                 },
                 longClickDownloadButton = {
+                    downloadCardViewModel.setResultItem(downloadViewModel.createResultItemFromDownload(it))
+                    downloadCardViewModel.setDownloadItem(it)
                     findNavController().navigate(R.id.downloadBottomSheetDialog, bundleOf(
-                        Pair("downloadItem", it),
-                        Pair("result", downloadViewModel.createResultItemFromDownload(it)),
                         Pair("type", it.type)
                     )
                     )
                 },
                 scheduleButtonClick = {downloadItem ->
-                    UiUtil.showDatePicker(parentFragmentManager) {
+                    UiUtil.showDatePicker(parentFragmentManager, preferences) {
                         Toast.makeText(context, getString(R.string.download_rescheduled_to) + " " + it.time, Toast.LENGTH_LONG).show()
-                        downloadViewModel.deleteDownload(downloadItem.id)
                         downloadItem.downloadStartTime = it.timeInMillis
                         runBlocking {
-                            downloadViewModel.queueDownloads(listOf(downloadItem))
-                            adapter.notifyItemChanged(position)
+                            downloadViewModel.queueDownloads(listOf(downloadItem), ignoreDuplicates = true)
                         }
                     }
                 }
@@ -219,6 +266,7 @@ class ScheduledDownloadsFragment : Fragment(), ScheduledDownloadAdapter.OnItemCl
         override fun onCreateActionMode(mode: ActionMode?, menu: Menu?): Boolean {
             mode!!.menuInflater.inflate(R.menu.scheduled_downloads_menu_context, menu)
             mode.title = "${adapter.getSelectedObjectsCount(totalSize)} ${getString(R.string.selected)}"
+            headerMenuBtn.isEnabled = false
             return true
         }
 
@@ -305,6 +353,7 @@ class ScheduledDownloadsFragment : Fragment(), ScheduledDownloadAdapter.OnItemCl
         override fun onDestroyActionMode(mode: ActionMode?) {
             actionMode = null
             adapter.clearCheckedItems()
+            headerMenuBtn.isEnabled = true
         }
 
         suspend fun getSelectedIDs() : List<Long>{
@@ -336,7 +385,7 @@ class ScheduledDownloadsFragment : Fragment(), ScheduledDownloadAdapter.OnItemCl
                                 downloadViewModel.getItemByID(itemID)
                             }
                             downloadViewModel.deleteDownload(deletedItem.id)
-                            Snackbar.make(scheduledRecyclerView, getString(R.string.you_are_going_to_delete) + ": " + deletedItem.title.ifEmpty { deletedItem.url }, Snackbar.LENGTH_LONG)
+                            Snackbar.make(scheduledRecyclerView, getString(R.string.you_are_going_to_delete) + ": " + deletedItem.title.ifEmpty { deletedItem.url }, Snackbar.LENGTH_INDEFINITE)
                                 .setAction(getString(R.string.undo)) {
                                     downloadViewModel.insert(deletedItem)
                                 }.show()

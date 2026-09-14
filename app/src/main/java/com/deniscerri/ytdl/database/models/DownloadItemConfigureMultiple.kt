@@ -3,7 +3,7 @@ package com.deniscerri.ytdl.database.models
 import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
-import com.deniscerri.ytdl.database.viewmodel.DownloadViewModel
+import com.deniscerri.ytdl.database.enums.DownloadType
 
 @Entity(tableName = "downloads")
 data class DownloadItemConfigureMultiple(
@@ -20,6 +20,6 @@ data class DownloadItemConfigureMultiple(
     var videoPreferences: VideoPreferences,
     @ColumnInfo(defaultValue = "Queued")
     var status: String,
-    var type: DownloadViewModel.Type,
+    var type: DownloadType,
     var incognito: Boolean = false
 )

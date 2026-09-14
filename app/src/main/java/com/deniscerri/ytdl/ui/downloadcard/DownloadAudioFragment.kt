@@ -23,18 +23,22 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.preference.PreferenceManager
-import com.afollestad.materialdialogs.utils.MDUtil.getStringArray
 import com.deniscerri.ytdl.R
+import com.deniscerri.ytdl.database.enums.DownloadType
 import com.deniscerri.ytdl.database.models.DownloadItem
 import com.deniscerri.ytdl.database.models.Format
 import com.deniscerri.ytdl.database.models.ResultItem
 import com.deniscerri.ytdl.database.viewmodel.DownloadViewModel
-import com.deniscerri.ytdl.database.viewmodel.DownloadViewModel.Type
+import com.deniscerri.ytdl.database.viewmodel.FormatViewModel
 import com.deniscerri.ytdl.database.viewmodel.ResultViewModel
+import com.deniscerri.ytdl.database.viewmodel.YTDLPViewModel
+import com.deniscerri.ytdl.util.Extensions.applyFilenameTemplateForCuts
+import com.deniscerri.ytdl.util.Extensions.createBadge
 import com.deniscerri.ytdl.util.FileUtil
 import com.deniscerri.ytdl.util.FormatUtil
 import com.deniscerri.ytdl.util.UiUtil
 import com.google.android.material.card.MaterialCardView
+import com.google.android.material.chip.Chip
 import com.google.android.material.snackbar.Snackbar
 import com.google.android.material.textfield.TextInputLayout
 import com.google.android.material.textfield.TextInputLayout.END_ICON_NONE
@@ -42,6 +46,7 @@ import com.google.gson.Gson
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -52,6 +57,8 @@ class DownloadAudioFragment(private var resultItem: ResultItem? = null, private 
     private var activity: Activity? = null
     private lateinit var downloadViewModel : DownloadViewModel
     private lateinit var resultViewModel : ResultViewModel
+    private lateinit var ytdlpViewModel : YTDLPViewModel
+    private lateinit var formatViewModel : FormatViewModel
     private lateinit var saveDir : TextInputLayout
     private lateinit var freeSpace : TextView
     private lateinit var genericAudioFormats: MutableList<Format>
@@ -60,7 +67,10 @@ class DownloadAudioFragment(private var resultItem: ResultItem? = null, private 
     lateinit var title : TextInputLayout
     lateinit var author : TextInputLayout
     lateinit var preferences: SharedPreferences
-    lateinit var shownFields: List<String>
+    private lateinit var shownFields: List<String>
+
+    private var disabledCutClicked: Boolean = false
+
     @SuppressLint("RestrictedApi")
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -71,9 +81,11 @@ class DownloadAudioFragment(private var resultItem: ResultItem? = null, private 
         activity = getActivity()
         downloadViewModel = ViewModelProvider(this)[DownloadViewModel::class.java]
         resultViewModel = ViewModelProvider(this)[ResultViewModel::class.java]
+        ytdlpViewModel = ViewModelProvider(requireActivity())[YTDLPViewModel::class.java]
+        formatViewModel = ViewModelProvider(requireActivity())[FormatViewModel::class.java]
         genericAudioFormats = FormatUtil(requireContext()).getGenericAudioFormats(requireContext().resources)
         preferences = PreferenceManager.getDefaultSharedPreferences(requireContext())
-        shownFields = preferences.getStringSet("modify_download_card", requireContext().getStringArray(R.array.modify_download_card_values).toSet())!!.toList()
+        shownFields = preferences.getStringSet("modify_download_card", requireContext().resources.getStringArray(R.array.modify_download_card_values).toSet())!!.toList()
         return fragmentView
     }
 
@@ -84,8 +96,8 @@ class DownloadAudioFragment(private var resultItem: ResultItem? = null, private 
                     downloadItem.apply {
                         title = resultItem!!.title
                         author = resultItem!!.author
-                        allFormats = resultItem!!.formats
-                        format = downloadViewModel.getFormat(allFormats, Type.audio)
+                        allFormats = resultItem!!.formats.toMutableList()
+                        format = downloadViewModel.getFormat(allFormats, DownloadType.audio)
                         duration = resultItem!!.duration
                         playlistIndex = resultItem!!.playlistIndex
                         playlistURL = resultItem!!.playlistURL
@@ -99,7 +111,7 @@ class DownloadAudioFragment(private var resultItem: ResultItem? = null, private 
                     val string = Gson().toJson(currentDownloadItem, DownloadItem::class.java)
                     Gson().fromJson(string, DownloadItem::class.java)
                 }else{
-                    downloadViewModel.createDownloadItemFromResult(resultItem, url, Type.audio)
+                    downloadViewModel.createDownloadItemFromResult(resultItem, url, DownloadType.audio)
                 }
             }
             val sharedPreferences = PreferenceManager.getDefaultSharedPreferences(requireContext())
@@ -187,10 +199,10 @@ class DownloadAudioFragment(private var resultItem: ResultItem? = null, private 
                     formats.addAll(resultItem?.formats?.filter { it.format_note.contains("audio", ignoreCase = true) } ?: listOf())
                 }else{
                     //if its updating a present downloaditem and its the wrong category
-                    if (currentDownloadItem!!.type != Type.audio){
-                        downloadItem.type = Type.audio
+                    if (currentDownloadItem!!.type != DownloadType.audio){
+                        downloadItem.type = DownloadType.audio
                         runCatching {
-                            downloadItem.format = downloadViewModel.getFormat(downloadItem.allFormats, Type.audio)
+                            downloadItem.format = downloadViewModel.getFormat(downloadItem.allFormats, DownloadType.audio)
                         }.onFailure {
                             downloadItem.format = genericAudioFormats.last()
                         }
@@ -219,20 +231,21 @@ class DownloadAudioFragment(private var resultItem: ResultItem? = null, private 
 
                 val formatCard = view.findViewById<MaterialCardView>(R.id.format_card_constraintLayout)
                 val chosenFormat = downloadItem.format
-                UiUtil.populateFormatCard(requireContext(), formatCard, chosenFormat, null)
+                val filesize = UiUtil.populateFormatCard(requireContext(), formatCard, chosenFormat, null, showSize = downloadItem.downloadSections.isEmpty())
+                formatViewModel.checkFreeSpace(filesize, downloadItem.downloadPath)
                 val listener = object : OnFormatClickListener {
                     override fun onFormatClick(formatTuple: FormatTuple) {
                         formatTuple.format?.apply {
                             downloadItem.format = this
-                            UiUtil.populateFormatCard(requireContext(), formatCard, this, null)
+                            val filesize = UiUtil.populateFormatCard(requireContext(), formatCard, this, null, showSize = downloadItem.downloadSections.isEmpty())
+                            formatViewModel.checkFreeSpace(filesize, downloadItem.downloadPath)
                         }
                     }
 
                     override fun onFormatsUpdated(allFormats: List<Format>) {
                         lifecycleScope.launch(Dispatchers.IO) {
                             resultItem?.apply {
-                                this.formats.removeAll(formats.toSet())
-                                this.formats.addAll(allFormats.filter { !genericAudioFormats.contains(it) })
+                                this.formats = allFormats.filter { !genericAudioFormats.contains(it) }
                                 resultViewModel.update(this)
                             }
 
@@ -242,15 +255,17 @@ class DownloadAudioFragment(private var resultItem: ResultItem? = null, private 
                         }
                         formats = allFormats.filter { !genericAudioFormats.contains(it) }.toMutableList()
                         formats.removeAll(genericAudioFormats)
-                        val preferredFormat = downloadViewModel.getFormat(formats, Type.audio)
+                        val preferredFormat = downloadViewModel.getFormat(formats, DownloadType.audio)
                         downloadItem.format = preferredFormat
                         downloadItem.allFormats = formats
-                        UiUtil.populateFormatCard(requireContext(), formatCard, preferredFormat, null)
+                        val filesize = UiUtil.populateFormatCard(requireContext(), formatCard, preferredFormat, null, showSize = downloadItem.downloadSections.isEmpty())
+                        formatViewModel.checkFreeSpace(filesize, downloadItem.downloadPath)
                     }
                 }
                 formatCard.setOnClickListener{
                     if (parentFragmentManager.findFragmentByTag("formatSheet") == null){
-                        val bottomSheet = FormatSelectionBottomSheetDialog(listOf(downloadItem), listener)
+                        formatViewModel.setItem(downloadItem, !nonSpecific)
+                        val bottomSheet = FormatSelectionBottomSheetDialog(listener)
                         bottomSheet.show(parentFragmentManager, "formatSheet")
                     }
                 }
@@ -269,7 +284,7 @@ class DownloadAudioFragment(private var resultItem: ResultItem? = null, private 
                     )
                 )
 
-                if (currentDownloadItem == null || !containers.contains(downloadItem.container)){
+                if (currentDownloadItem == null || !containers.contains(downloadItem.container.ifEmpty { getString(R.string.defaultValue) })){
                     downloadItem.container = if (containerPreference == getString(R.string.defaultValue)) "" else containerPreference!!
                 }
                 containerAutoCompleteTextView.setText(downloadItem.container.ifEmpty { getString(R.string.defaultValue) }, false)
@@ -278,6 +293,17 @@ class DownloadAudioFragment(private var resultItem: ResultItem? = null, private 
                     AdapterView.OnItemClickListener { _: AdapterView<*>?, _: View?, index: Int, _: Long ->
                         downloadItem.container = containers[index]
                         if (containers[index] == getString(R.string.defaultValue)) downloadItem.container = ""
+                        if (downloadItem.container == "wav") {
+                            downloadItem.audioPreferences.embedThumb = false
+                            downloadItem.audioPreferences.cropThumb = false
+                            view.findViewById<Chip>(R.id.thumbnail).apply {
+                                isEnabled = false
+                                isChecked = false
+                                createBadge(requireContext(), 0)
+                            }
+                        }else {
+                            view.findViewById<Chip>(R.id.thumbnail).isEnabled = true
+                        }
                     }
 
 
@@ -287,6 +313,7 @@ class DownloadAudioFragment(private var resultItem: ResultItem? = null, private 
                         UiUtil.configureAudio(
                             view,
                             requireActivity(),
+                            ytdlpViewModel,
                             listOf(downloadItem),
                             embedThumbClicked = {
                                 downloadItem.audioPreferences.embedThumb = it
@@ -296,6 +323,9 @@ class DownloadAudioFragment(private var resultItem: ResultItem? = null, private 
                             },
                             splitByChaptersClicked = {
                                 downloadItem.audioPreferences.splitByChapters = it
+                            },
+                            bitrateSet = {
+                                downloadItem.audioPreferences.bitrate = it
                             },
                             filenameTemplateSet = {
                                 downloadItem.customFileNameTemplate = it
@@ -319,23 +349,42 @@ class DownloadAudioFragment(private var resultItem: ResultItem? = null, private 
                                 if(isUpdatingData){
                                     val snack = Snackbar.make(view, context.getString(R.string.please_wait), Snackbar.LENGTH_SHORT)
                                     snack.show()
-                                }else{
-                                    val snack = Snackbar.make(view, context.getString(R.string.cut_unavailable), Snackbar.LENGTH_SHORT)
+                                }else if (downloadItem.duration == "0:00" || downloadItem.duration == "-1"){
+                                    val snack = Snackbar.make(view, context.getString(R.string.cut_unsupported), Snackbar.LENGTH_SHORT)
+                                    snack.show()
+                                }else if (!nonSpecific){
+                                    val snack = Snackbar.make(view, context.getString(R.string.cut_unavailable_please_update_item), Snackbar.LENGTH_SHORT)
                                     snack.setAction(R.string.update){
                                         CoroutineScope(SupervisorJob()).launch(Dispatchers.IO) {
                                             resultItem?.apply {
                                                 val rsVM = ViewModelProvider(requireActivity())[ResultViewModel::class.java]
                                                 rsVM.updateItemData(this)
+                                                disabledCutClicked = true
                                             }
                                         }
                                     }
                                     snack.show()
                                 }
                             },
-                            extraCommandsClicked = {
+                            cutValueChanged = {
+                                downloadItem.downloadSections = it
+                                val filesize = UiUtil.populateFormatCard(requireContext(), formatCard, downloadItem.format, showSize = downloadItem.downloadSections.isEmpty())
+                                formatViewModel.checkFreeSpace(filesize, downloadItem.downloadPath)
+
+                                if (it.isNotBlank()){
+                                    downloadItem.customFileNameTemplate = downloadItem.customFileNameTemplate.applyFilenameTemplateForCuts()
+                                }else{
+                                    downloadItem.customFileNameTemplate = downloadViewModel.applySubdirectoryPreferences(
+                                        sharedPreferences.getString("file_name_template_audio", "%(uploader).30B - %(title).170B")!!
+                                    )
+                                }
+
+                            },
+                            extraCommandsClicked = { returnValue ->
                                 val callback = object : ExtraCommandsListener {
                                     override fun onChangeExtraCommand(c: String) {
                                         downloadItem.extraCommands = c
+                                        returnValue(c)
                                     }
                                 }
 
@@ -349,6 +398,22 @@ class DownloadAudioFragment(private var resultItem: ResultItem? = null, private 
                 e.printStackTrace()
             }
             super.onViewCreated(view, savedInstanceState)
+
+            view.findViewById<Chip>(R.id.cut).apply {
+                if (this.isEnabled && savedInstanceState?.containsKey("click_cut") == true) {
+                    this.performClick()
+                }
+            }
+        }
+
+        lifecycleScope.launch {
+            formatViewModel.noFreeSpace.collectLatest {
+                if (it != null) {
+                    val snack = Snackbar.make(view, it, Snackbar.LENGTH_INDEFINITE)
+                    snack.setTextMaxLines(10)
+                    snack.show()
+                }
+            }
         }
     }
 
@@ -358,7 +423,8 @@ class DownloadAudioFragment(private var resultItem: ResultItem? = null, private 
         formats.find { it.format_id == formatID }?.apply {
             downloadItem.format = this
             val formatCard = requireView().findViewById<MaterialCardView>(R.id.format_card_constraintLayout)
-            UiUtil.populateFormatCard(requireContext(), formatCard, downloadItem.format, listOf())
+            val filesize = UiUtil.populateFormatCard(requireContext(), formatCard, downloadItem.format, listOf(), showSize = downloadItem.downloadSections.isEmpty())
+            formatViewModel.checkFreeSpace(filesize, downloadItem.downloadPath)
         }
     }
 
@@ -375,6 +441,10 @@ class DownloadAudioFragment(private var resultItem: ResultItem? = null, private 
         resultItem = res
         val state = Bundle()
         state.putBoolean("updated", true)
+        if (disabledCutClicked) {
+            state.putBoolean("click_cut", true)
+            disabledCutClicked = false
+        }
         onViewCreated(requireView(),savedInstanceState = state)
     }
 

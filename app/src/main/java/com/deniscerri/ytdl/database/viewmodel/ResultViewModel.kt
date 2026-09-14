@@ -6,11 +6,11 @@ import android.app.Application
 import android.content.SharedPreferences
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.LiveData
-import androidx.lifecycle.MediatorLiveData
-import androidx.lifecycle.MutableLiveData
-import androidx.lifecycle.asLiveData
 import androidx.lifecycle.viewModelScope
+import androidx.paging.Pager
+import androidx.paging.PagingConfig
+import androidx.paging.PagingData
+import androidx.paging.cachedIn
 import androidx.preference.PreferenceManager
 import com.deniscerri.ytdl.App
 import com.deniscerri.ytdl.R
@@ -18,31 +18,48 @@ import com.deniscerri.ytdl.database.DBManager
 import com.deniscerri.ytdl.database.dao.ResultDao
 import com.deniscerri.ytdl.database.models.ChapterItem
 import com.deniscerri.ytdl.database.models.Format
-import com.deniscerri.ytdl.database.models.HistoryItem
 import com.deniscerri.ytdl.database.models.ResultItem
 import com.deniscerri.ytdl.database.models.SearchHistoryItem
 import com.deniscerri.ytdl.database.repository.ResultRepository
 import com.deniscerri.ytdl.database.repository.SearchHistoryRepository
 import com.deniscerri.ytdl.util.NotificationUtil
-import com.yausername.youtubedl_android.YoutubeDLException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.count
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 import java.util.concurrent.CancellationException
+import kotlin.collections.filter
 
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class ResultViewModel(private val application: Application) : AndroidViewModel(application) {
     private val tag: String = "ResultViewModel"
     val repository : ResultRepository
     private val searchHistoryRepository : SearchHistoryRepository
-    val items : LiveData<List<ResultItem>>
-    private var _items = MediatorLiveData<List<ResultItem>>()
-    val playlistFilter = MutableLiveData("")
+    val playlistFilter = MutableStateFlow("")
+
+    var paginatedItems : Flow<PagingData<ResultItem>>
+    var totalCount = MutableStateFlow(0)
+    var firstResult = MutableStateFlow<ResultItem?>(null)
+    var playlistResults : StateFlow<List<String>>
+
 
     private val notificationUtil: NotificationUtil
     private val dao: ResultDao
@@ -72,60 +89,91 @@ class ResultViewModel(private val application: Application) : AndroidViewModel(a
     private val sharedPreferences: SharedPreferences
 
     init {
-        dao = DBManager.getInstance(application).resultDao
-        repository = ResultRepository(dao, getApplication<Application>().applicationContext)
+        val dbManager = DBManager.getInstance(application)
+        dao = dbManager.resultDao
+        val commandTemplateDao = dbManager.commandTemplateDao
+        repository = ResultRepository(dao, commandTemplateDao, getApplication<Application>().applicationContext)
         searchHistoryRepository = SearchHistoryRepository(DBManager.getInstance(application).searchHistoryDao)
 
-        items = repository.allResults.asLiveData()
-        _items.addSource(items){
-            filter()
-        }
-        _items.addSource(playlistFilter) {
-            filter()
-        }
+        playlistResults = dao.getDistinctPlaylistNamesFlow()
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5000),
+                initialValue = emptyList()
+            )
+
+        val filters = listOf(dao.getResultsFlow(), playlistFilter)
+        paginatedItems = combine(filters) { f ->
+            val playlistF = f[1] as String
+            var pager = Pager(
+                config = PagingConfig(pageSize = 20, initialLoadSize = 20, prefetchDistance = 1),
+                pagingSourceFactory = {
+                    dao.getPaginatedFilteredFlow(playlistF)
+                }
+            ).flow
+
+            withContext(Dispatchers.IO) {
+                firstResult.value = dao.getFirstMatchingResult(playlistF)
+                totalCount.value = repository.getFilteredIDs(playlistFilter.value).size
+            }
+
+            pager
+        }.flatMapLatest { it }
 
         sharedPreferences = PreferenceManager.getDefaultSharedPreferences(application)
         notificationUtil = NotificationUtil(application)
-    }
-
-    fun filter() = viewModelScope.launch(Dispatchers.IO){
-        _items.postValue(repository.getFiltered(playlistFilter.value ?: ""))
     }
 
     fun setPlaylistFilter(p: String){
         playlistFilter.value = p
     }
 
-    fun getFilteredList() : LiveData<List<ResultItem>> {
-        return _items
+    private fun resetPlaylistFilter() = viewModelScope.launch(Dispatchers.Main) {
+        playlistFilter.value = ""
     }
 
     fun checkTrending() = viewModelScope.launch(Dispatchers.IO){
         try {
             val item = repository.getFirstResult()
             if (
-                item.playlistTitle == getApplication<App>().getString(R.string.trendingPlaylist)
-                && item.creationTime < (System.currentTimeMillis() / 1000) - 86400
+                item == null || (item.playlistTitle == getApplication<App>().getString(R.string.trendingPlaylist)
+                && item.creationTime < (System.currentTimeMillis() / 1000) - 86400)
             ){
-                getTrending()
+                getHomeRecommendations()
             }
         }catch (e : Exception){
             e.printStackTrace()
-            getTrending()
+            getHomeRecommendations()
         }
     }
-    fun getTrending() = viewModelScope.launch(Dispatchers.IO){
-        if (sharedPreferences.getBoolean("home_recommendations", false)){
-            repository.updateTrending()
+
+
+    fun getHomeRecommendations() = viewModelScope.launch(Dispatchers.IO){
+        val homeRecommendations = sharedPreferences.getString("recommendations_home", "")
+        val customHomeRecommendations = sharedPreferences.getString("custom_home_recommendation_url", "")
+        val emptyCustomRecommendations = customHomeRecommendations.isNullOrBlank() && homeRecommendations == "custom"
+
+        if (!homeRecommendations.isNullOrBlank() && !emptyCustomRecommendations){
+            kotlin.runCatching {
+                uiState.update {it.copy(processing = true)}
+                repository.getHomeRecommendations()
+                uiState.update {it.copy(processing = false)}
+            }.onFailure { t ->
+                uiState.update {it.copy(
+                    processing = false,
+                    errorMessage =  t.message.toString(),
+                )}
+            }
         }else{
             deleteAll()
         }
     }
 
     fun cancelParsingQueries(){
-        parsingQueries?.cancel(CancellationException())
-        parsingQueriesJobList.forEach { it.cancel(CancellationException()) }
-        uiState.update {it.copy(processing = false)}
+        parsingQueries?.cancel()
+        parsingQueriesJobList.forEach { it.cancel() }
+        parsingQueriesJobList.clear()
+        uiState.update { it.copy(processing = false) }
     }
 
     private suspend fun parseQueriesImpl(inputQueries: List<String>, onResult: (list: List<ResultItem?>) -> Unit) {
@@ -133,35 +181,42 @@ class ResultViewModel(private val application: Application) : AndroidViewModel(a
             repository.itemCount.value = inputQueries.size
         }
         val resetResults = inputQueries.size == 1
-
         uiState.update {it.copy(processing = true, errorMessage = null)}
+
         val res = mutableListOf<ResultItem?>()
-
         val requestSemaphore = Semaphore(10)
-        inputQueries.forEach { inputQuery ->
-            parsingQueriesJobList.add(viewModelScope.launch(Dispatchers.IO){
-                requestSemaphore.withPermit {
-                    try {
-                        res.addAll(repository.getResultsFromSource(inputQuery, resetResults))
-                    } catch (e: Exception) {
-                        if (updateResultDataJob?.isCancelled == false || e is YoutubeDLException){
-                            uiState.update {it.copy(
-                                processing = false,
-                                errorMessage = e.message.toString(),
-                            )}
-                            Log.e(tag, e.toString())
-                        }
 
+        try {
+            coroutineScope {
+                inputQueries.forEach { inputQuery ->
+                    launch(Dispatchers.IO) {
+                        requestSemaphore.withPermit {
+                            try {
+                                val results = repository.getResultsFromSource(inputQuery, resetResults)
+                                synchronized(res) { res.addAll(results) }
+                            } catch (e: Exception) {
+                                if (e is CancellationException) throw e
+                                if (isActive) {
+                                    uiState.update { it.copy(processing = false, errorMessage = e.message.toString()) }
+                                }
+                            }
+                        }
                     }
                 }
-            })
+            }
+
+            if (currentCoroutineContext().isActive) {
+                onResult(res)
+            }
+
+        } catch (e: CancellationException) {
+            Log.d(tag, "Parsing queries cancelled.")
+        } finally {
+            uiState.update { it.copy(processing = false) }
+            if (!isForegrounded() && inputQueries.size > 1) {
+                notificationUtil.showQueriesFinished()
+            }
         }
-        parsingQueriesJobList.joinAll()
-        if (!isForegrounded() && inputQueries.size > 1){
-            notificationUtil.showQueriesFinished()
-        }
-        uiState.update {it.copy(processing = false)}
-        onResult(res)
     }
 
     suspend fun parseQueries(inputQueries: List<String>, onResult: (list: List<ResultItem?>) -> Unit) {
@@ -195,6 +250,7 @@ class ResultViewModel(private val application: Application) : AndroidViewModel(a
 
     suspend fun deleteAll() = viewModelScope.launch(Dispatchers.IO) {
         repository.deleteAll()
+        resetPlaylistFilter()
     }
 
     fun update(item: ResultItem) = viewModelScope.launch(Dispatchers.IO){
@@ -237,7 +293,7 @@ class ResultViewModel(private val application: Application) : AndroidViewModel(a
         return searchHistoryRepository.getAll()
     }
 
-    fun deleteSelected(selectedItems : List<ResultItem>) = viewModelScope.launch(Dispatchers.IO) {
+    fun deleteSelected(selectedItems : List<Long>) = viewModelScope.launch(Dispatchers.IO) {
         selectedItems.forEach {
             repository.delete(it)
         }
@@ -245,29 +301,23 @@ class ResultViewModel(private val application: Application) : AndroidViewModel(a
 
 
     suspend fun updateItemData(res: ResultItem){
-        if (updateResultDataJob == null || updateResultDataJob?.isCancelled == true || updateResultDataJob?.isCompleted == true){
-            updateResultDataJob = viewModelScope.launch(Dispatchers.IO) {
-                updatingData.emit(true)
-                updatingData.value = true
-                parseQueriesImpl(listOf(res.url)){ result ->
-                    viewModelScope.launch(Dispatchers.IO){
-                        updatingData.emit(false)
-                        updatingData.value = false
-                        updateResultData.emit(result)
-                    }
-                }
-            }
+        if (updateResultDataJob?.isActive == true) return
+        updateResultData.emit(null)
+        updateResultData.value = null
 
-            //updateResultDataJob?.start()
-            updateResultDataJob?.invokeOnCompletion {
-                if (it != null){
-                    viewModelScope.launch(Dispatchers.IO) {
-                        updatingData.emit(false)
-                        updatingData.value = false
-                        updateResultData.emit(null)
-                        updateResultData.value = null
+        updateResultDataJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                updatingData.value = true
+                parseQueriesImpl(listOf(res.url)) { result ->
+                    if (isActive) {
+                        updateResultData.value = result
                     }
                 }
+            } catch (e: CancellationException) {
+            } finally {
+                updatingData.emit(false)
+                updatingData.value = false
+
             }
         }
     }
@@ -289,44 +339,32 @@ class ResultViewModel(private val application: Application) : AndroidViewModel(a
     }
 
     suspend fun updateFormatItemData(result: ResultItem){
-        if (updateFormatsResultDataJob == null || updateFormatsResultDataJob?.isCancelled == true || updateFormatsResultDataJob?.isCompleted == true) {
-            updateFormatsResultDataJob = viewModelScope.launch(Dispatchers.IO) {
-                updatingFormats.emit(true)
-                try {
-                    val formats = getFormats(result.url)
-                    updatingFormats.emit(false)
-                    formats.apply {
-                        if (formats.isNotEmpty() && updateFormatsResultDataJob?.isCancelled == false) {
-                            getItemByURL(result.url)?.apply {
-                                this.formats = formats.toMutableList()
-                                update(this)
-                            }
-                            updateFormatsResultData.emit(formats.toMutableList())
-                        }
+        if (updateFormatsResultDataJob?.isActive == true) return
+        updateFormatsResultData.emit(null)
+        updateFormatsResultData.value = null
+
+        updateFormatsResultDataJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                updatingFormats.value = true
+                val formats = getFormats(result.url)
+                ensureActive()
+                if (formats.isNotEmpty()) {
+                    getItemByURL(result.url)?.apply {
+                        this.formats = formats.toMutableList()
+                        update(this)
                     }
-                }catch(e: Exception) {
-                    if (e !is kotlinx.coroutines.CancellationException) {
-                        uiState.update {
-                            it.copy(
-                                processing = false,
-                                errorMessage = e.message.toString(),
-                            )
-                        }
-                        Log.e(tag, e.toString())
-                    }
-                    updatingFormats.emit(false)
+                    updateFormatsResultData.emit(formats.toMutableList())
                 }
-            }
-            updateFormatsResultDataJob?.start()
-            updateFormatsResultDataJob?.invokeOnCompletion {
-                if (it != null){
-                    viewModelScope.launch(Dispatchers.IO) {
-                        updatingFormats.emit(false)
-                        updatingFormats.value = false
-                        updateFormatsResultData.emit(null)
-                        updateFormatsResultData.value = null
-                    }
+            } catch (e: CancellationException) {
+
+            } catch (e: Exception) {
+                uiState.update {
+                    it.copy(processing = false, errorMessage = e.message.toString())
                 }
+                Log.e(tag, "Error updating formats: $e")
+            } finally {
+                updatingFormats.emit(false)
+                updatingFormats.value = false
             }
         }
     }
@@ -360,5 +398,33 @@ class ResultViewModel(private val application: Application) : AndroidViewModel(a
 
     fun getStreamingUrlAndChapters(url: String) : Pair<List<String>, List<ChapterItem>?> {
         return repository.getStreamingUrlAndChapters(url)
+    }
+
+    fun getItemIDsNotPresentIn(not: List<Long>) : List<Long> {
+        val ids = repository.getFilteredIDs(playlistFilter.value)
+        return ids.filter { !not.contains(it) }
+    }
+
+    fun getAllIds() : List<Long> {
+        return repository.getFilteredIDs(playlistFilter.value)
+    }
+
+    fun reverseResults(resultItems: List<Long>): List<Long> {
+        val latestResult = resultItems.max()
+        val newIdsMap = mutableListOf<Pair<Long, Long>>()
+
+        var i = 0
+        resultItems.reversed().forEach {
+            newIdsMap.add(Pair(it, latestResult + (++i)))
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            delay(1000)
+            newIdsMap.forEach {
+                repository.updateID(it.first, it.second)
+            }
+        }
+
+        return newIdsMap.map { it.second }
     }
 }

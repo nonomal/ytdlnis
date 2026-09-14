@@ -1,7 +1,5 @@
 package com.deniscerri.ytdl.ui.downloads
 
-import android.annotation.SuppressLint
-import android.content.DialogInterface
 import android.content.SharedPreferences
 import android.os.Bundle
 import android.view.LayoutInflater
@@ -20,18 +18,15 @@ import androidx.viewpager2.widget.ViewPager2
 import androidx.work.WorkManager
 import com.deniscerri.ytdl.MainActivity
 import com.deniscerri.ytdl.R
-import com.deniscerri.ytdl.database.repository.DownloadRepository
+import com.deniscerri.ytdl.database.viewmodel.DownloadCardViewModel
 import com.deniscerri.ytdl.database.viewmodel.DownloadViewModel
 import com.deniscerri.ytdl.util.Extensions.createBadge
 import com.deniscerri.ytdl.util.NavbarUtil
 import com.deniscerri.ytdl.util.NotificationUtil
 import com.deniscerri.ytdl.util.UiUtil
 import com.google.android.material.appbar.MaterialToolbar
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
-import com.google.gson.Gson
-import com.yausername.youtubedl_android.YoutubeDL
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -40,6 +35,7 @@ import kotlinx.coroutines.withContext
 
 class DownloadQueueMainFragment : Fragment(){
     private lateinit var downloadViewModel: DownloadViewModel
+    private lateinit var downloadCardViewModel: DownloadCardViewModel
     private lateinit var topAppBar: MaterialToolbar
     private lateinit var workManager: WorkManager
     private lateinit var tabLayout: TabLayout
@@ -48,6 +44,8 @@ class DownloadQueueMainFragment : Fragment(){
     private lateinit var mainActivity: MainActivity
     private lateinit var notificationUtil: NotificationUtil
     private lateinit var sharedPreferences: SharedPreferences
+
+    private var selectedTabIndex = 0
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -64,6 +62,11 @@ class DownloadQueueMainFragment : Fragment(){
         super.onViewCreated(view, savedInstanceState)
         workManager = WorkManager.getInstance(requireContext())
         downloadViewModel = ViewModelProvider(requireActivity())[DownloadViewModel::class.java]
+        downloadCardViewModel = ViewModelProvider(requireActivity())[DownloadCardViewModel::class.java]
+
+        if (savedInstanceState != null) {
+            selectedTabIndex = savedInstanceState.getInt("selected_download_tab", 0)
+        }
 
         topAppBar = view.findViewById(R.id.downloads_toolbar)
         val isInNavBar = NavbarUtil.getNavBarItems(requireActivity()).any { n -> n.itemId == R.id.downloadQueueMainFragment && n.isVisible }
@@ -122,8 +125,10 @@ class DownloadQueueMainFragment : Fragment(){
             override fun onPageSelected(position: Int) {
                 tabLayout.selectTab(tabLayout.getTabAt(position))
                 initMenu()
+                selectedTabIndex = position
             }
         })
+        viewPager2.setCurrentItem(selectedTabIndex, false)
         initMenu()
 
         if (arguments?.getString("tab") != null){
@@ -138,11 +143,11 @@ class DownloadQueueMainFragment : Fragment(){
                             val item = withContext(Dispatchers.IO){
                                 downloadViewModel.getItemByID(reconfigureID)
                             }
+                            downloadCardViewModel.setResultItem(downloadViewModel.createResultItemFromDownload(item))
+                            downloadCardViewModel.setDownloadItem(item)
                             findNavController().navigate(R.id.downloadBottomSheetDialog, bundleOf(
-                                Pair("downloadItem", item),
-                                Pair("result", downloadViewModel.createResultItemFromDownload(item)),
                                 Pair("type", item.type)
-                            )
+                                )
                             )
                         }
                     }
@@ -207,49 +212,15 @@ class DownloadQueueMainFragment : Fragment(){
         topAppBar.setOnMenuItemClickListener { m: MenuItem ->
             try{
                 when(m.itemId){
+                    R.id.clear_all -> {
+                        UiUtil.showGenericDeleteAllDialog(requireContext()) {
+                            downloadViewModel.deleteAll()
+                        }
+                    }
                     R.id.clear_queue -> {
-                        showDeleteDialog {
-                            cancelAllDownloads()
+                        UiUtil.showGenericDeleteAllDialog(requireContext()) {
+                            downloadViewModel.cancelAllDownloads()
                         }
-                    }
-                    R.id.clear_cancelled -> {
-                        showDeleteDialog {
-                            downloadViewModel.deleteCancelled()
-                        }
-                    }
-                    R.id.clear_scheduled -> {
-                        showDeleteDialog {
-                            downloadViewModel.deleteScheduled()
-                        }
-                    }
-                    R.id.clear_errored -> {
-                        showDeleteDialog {
-                            downloadViewModel.deleteErrored()
-                        }
-                    }
-                    R.id.clear_saved -> {
-                        showDeleteDialog {
-                            downloadViewModel.deleteSaved()
-                        }
-                    }
-                    R.id.copy_urls -> {
-                        lifecycleScope.launch {
-                            val tabStatus = mapOf(
-                                0 to listOf(DownloadRepository.Status.Active),
-                                1 to listOf(DownloadRepository.Status.Queued),
-                                2 to listOf(DownloadRepository.Status.Scheduled),
-                                3 to listOf(DownloadRepository.Status.Cancelled),
-                                4 to listOf(DownloadRepository.Status.Error),
-                                5 to listOf(DownloadRepository.Status.Saved),
-                            )
-                            tabStatus[tabLayout.selectedTabPosition]?.apply {
-                                val urls = withContext(Dispatchers.IO){
-                                    downloadViewModel.getURLsByStatus(this@apply)
-                                }
-                                UiUtil.copyToClipboard(urls.joinToString("\n"), requireActivity())
-                            }
-                        }
-
                     }
                 }
             }catch (e: Exception){
@@ -260,36 +231,13 @@ class DownloadQueueMainFragment : Fragment(){
         }
     }
 
-    private fun showDeleteDialog (deleteClicked: (deleteClicked: Boolean) -> Unit){
-        val deleteDialog = MaterialAlertDialogBuilder(requireContext())
-        deleteDialog.setTitle(getString(R.string.you_are_going_to_delete_multiple_items))
-        deleteDialog.setNegativeButton(getString(R.string.cancel)) { dialogInterface: DialogInterface, _: Int -> dialogInterface.cancel() }
-        deleteDialog.setPositiveButton(getString(R.string.ok)) { _: DialogInterface?, _: Int ->
-            deleteClicked(true)
-        }
-        deleteDialog.show()
-    }
-
-    @SuppressLint("NotifyDataSetChanged")
-    private fun cancelAllDownloads() {
-        sharedPreferences.edit().putBoolean("paused_downloads", false).apply()
-        fragmentAdapter.notifyDataSetChanged()
-        workManager.cancelAllWorkByTag("download")
-        lifecycleScope.launch {
-            val notificationUtil = NotificationUtil(requireContext())
-            val activeAndQueued = withContext(Dispatchers.IO){
-                downloadViewModel.getActiveAndQueuedDownloadIDs()
-            }
-            activeAndQueued.forEach { id ->
-                YoutubeDL.getInstance().destroyProcessById(id.toString())
-                notificationUtil.cancelDownloadNotification(id.toInt())
-            }
-            downloadViewModel.cancelActiveQueued()
-        }
-    }
-
     fun scrollToActive(){
         tabLayout.getTabAt(0)!!.select()
         viewPager2.setCurrentItem(0, true)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putInt("selected_download_tab", selectedTabIndex)
     }
 }

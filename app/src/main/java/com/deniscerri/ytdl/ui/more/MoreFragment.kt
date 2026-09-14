@@ -1,36 +1,32 @@
 package com.deniscerri.ytdl.ui.more
 
-import android.content.DialogInterface
 import android.content.Intent
 import android.content.SharedPreferences
+import android.os.Build
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.CheckBox
+import android.widget.ImageView
 import android.widget.TextView
+import androidx.appcompat.app.AlertDialog
+import androidx.core.content.ContextCompat
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import androidx.preference.PreferenceManager
-import androidx.work.WorkManager
 import com.deniscerri.ytdl.MainActivity
 import com.deniscerri.ytdl.R
-import com.deniscerri.ytdl.database.repository.DownloadRepository
 import com.deniscerri.ytdl.database.viewmodel.DownloadViewModel
 import com.deniscerri.ytdl.ui.more.settings.SettingsActivity
 import com.deniscerri.ytdl.ui.more.terminal.TerminalActivity
 import com.deniscerri.ytdl.util.NavbarUtil
-import com.deniscerri.ytdl.util.NotificationUtil
+import com.google.android.material.color.MaterialColors
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
-import com.yausername.youtubedl_android.YoutubeDL
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withContext
 import kotlin.system.exitProcess
 
 class MoreFragment : Fragment() {
@@ -70,6 +66,13 @@ class MoreFragment : Fragment() {
         observeSources = view.findViewById(R.id.observe_sources)
         terminateApp = view.findViewById(R.id.terminate)
         settings = view.findViewById(R.id.settings)
+
+        val appIcon = view.findViewById<ImageView>(R.id.app_icon)
+        if (mainSharedPreferences.getString("theme_accent", "blue") == "Default" && Build.VERSION.SDK_INT >= 32) {
+            appIcon.backgroundTintList = MaterialColors.getColorStateList(requireContext(), R.attr.colorPrimary, ContextCompat.getColorStateList(requireContext(), R.color.icon_fg)!!)
+        } else {
+            appIcon.backgroundTintList = null
+        }
 
         var showingTerminal = false
         var showingDownloads = false
@@ -115,62 +118,11 @@ class MoreFragment : Fragment() {
         }
 
         terminateApp.setOnClickListener {
-            if (mainSharedPreferences.getBoolean("ask_terminate_app", true)){
-                var doNotShowAgain = false
-                val terminateDialog = MaterialAlertDialogBuilder(requireContext())
-                terminateDialog.setTitle(getString(R.string.confirm_delete_history))
-                val dialogView = layoutInflater.inflate(R.layout.dialog_terminate_app, null)
-                val checkbox = dialogView.findViewById<CheckBox>(R.id.doNotShowAgain)
-                terminateDialog.setView(dialogView)
-
-
-
-                checkbox.setOnCheckedChangeListener { compoundButton, b ->
-                    doNotShowAgain = compoundButton.isChecked
-                }
-
-                val workManager = WorkManager.getInstance(requireContext())
-                val notificationUtil = NotificationUtil(requireContext())
-
-                terminateDialog.setNegativeButton(getString(R.string.cancel)) { dialogInterface: DialogInterface, _: Int -> dialogInterface.cancel() }
-                terminateDialog.setPositiveButton(getString(R.string.ok)) { diag: DialogInterface?, _: Int ->
-                    lifecycleScope.launch {
-                        val activeDownloads = withContext(Dispatchers.IO){
-                            downloadViewModel.getActiveDownloadsCount()
-                        }
-                        if (activeDownloads > 0) {
-                            workManager.cancelAllWorkByTag("download")
-                            val activeDownloadsList = withContext(Dispatchers.IO){
-                                downloadViewModel.getActiveDownloads()
-                            }
-
-                            activeDownloadsList.forEach {
-                                it.status = DownloadRepository.Status.Queued.toString()
-                                YoutubeDL.getInstance().destroyProcessById(it.id.toString())
-                                notificationUtil.cancelDownloadNotification(it.id.toInt())
-                                withContext(Dispatchers.IO) {
-                                    downloadViewModel.updateDownload(it)
-                                }
-                            }
-                            mainSharedPreferencesEditor.putBoolean("paused_downloads", true).apply()
-                        }
-
-                        if (doNotShowAgain){
-                            mainSharedPreferencesEditor.putBoolean("ask_terminate_app", false).apply()
-                        }
-                        mainSharedPreferencesEditor.commit()
-                        mainActivity.finishAndRemoveTask()
-                        mainActivity.finishAffinity()
-                        exitProcess(0)
-                    }
-                }
-                terminateDialog.show()
-            }else{
-                mainActivity.finishAndRemoveTask()
-                mainActivity.finishAffinity()
-                exitProcess(0)
-            }
-
+            showTerminateConfirmationDialog()
+        }
+        terminateApp.setOnLongClickListener {
+            showTerminateConfirmationDialog(skipPreference = true)
+            true
         }
 
         settings.setOnClickListener {
@@ -178,6 +130,52 @@ class MoreFragment : Fragment() {
             startActivity(intent)
         }
 
+    }
+
+    fun showTerminateConfirmationDialog(skipPreference: Boolean = false) {
+        val shouldAskToTerminate = mainSharedPreferences.getBoolean("ask_terminate_app", true)
+        if (!shouldAskToTerminate && !skipPreference) {
+            terminateApp.isEnabled = false
+            terminateApp()
+            return
+        }
+
+        var doNotShowAgainFinalState = !shouldAskToTerminate
+
+        lateinit var dialog: AlertDialog
+        val terminateDialog = MaterialAlertDialogBuilder(requireContext())
+        terminateDialog.setTitle(getString(R.string.kill_app))
+        val dialogView = layoutInflater.inflate(R.layout.dialog_terminate_app, null)
+        val checkbox = dialogView.findViewById<CheckBox>(R.id.doNotShowAgain)
+        terminateDialog.setView(dialogView)
+
+        checkbox.isChecked = doNotShowAgainFinalState
+        checkbox.setOnCheckedChangeListener { _, isChecked ->
+            doNotShowAgainFinalState = isChecked
+        }
+
+        terminateDialog.setNegativeButton(getString(R.string.cancel)) { dialogInterface, _ ->
+            dialogInterface.cancel()
+        }
+
+        terminateDialog.setPositiveButton(getString(R.string.ok), null)
+        dialog = terminateDialog.show()
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            dialog.setCanceledOnTouchOutside(false)
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = false
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).isEnabled = false
+            mainSharedPreferencesEditor.putBoolean("ask_terminate_app", !doNotShowAgainFinalState).commit()
+            terminateApp()
+        }
+    }
+
+    fun terminateApp() {
+        lifecycleScope.launch {
+            downloadViewModel.pauseAllDownloads()
+            mainActivity.finishAndRemoveTask()
+            mainActivity.finishAffinity()
+            exitProcess(0)
+        }
     }
 
     companion object {

@@ -9,13 +9,11 @@ import android.os.Bundle
 import android.text.Spanned
 import android.util.TypedValue
 import androidx.annotation.DrawableRes
-import androidx.appcompat.app.AppCompatActivity
+import androidx.annotation.StringRes
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.text.HtmlCompat
 import androidx.core.text.parseAsHtml
 import androidx.preference.PreferenceManager
-import androidx.test.runner.lifecycle.ActivityLifecycleCallback
-import androidx.test.runner.lifecycle.Stage
 import com.deniscerri.ytdl.MainActivity
 import com.deniscerri.ytdl.R
 import com.google.android.material.color.DynamicColors
@@ -59,22 +57,33 @@ object ThemeUtil {
     }
 
     sealed class AppIcon(
+        @StringRes val nameResource: Int,
         @DrawableRes val iconResource: Int,
         val activityAlias: String
     ) {
-        object Default : AppIcon(R.mipmap.ic_launcher, "Default")
-        object Light : AppIcon(R.mipmap.ic_launcher_light, "LightIcon")
-        object Dark : AppIcon(R.mipmap.ic_launcher_dark, "DarkIcon")
+        object Default : AppIcon(R.string.auto, R.mipmap.ic_launcher, "Default")
+        object Light : AppIcon(R.string.light, R.mipmap.ic_launcher_light, "LightIcon")
+        object Dark : AppIcon(R.string.dark, R.mipmap.ic_launcher_dark, "DarkIcon")
+        object Blue : AppIcon(R.string.blue, R.mipmap.ic_launcher_blue, "BlueIcon")
+        object Green : AppIcon(R.string.green, R.mipmap.ic_launcher_green, "GreenIcon")
     }
 
-    private val availableIcons = listOf(
+    val availableIcons = listOf(
         AppIcon.Default,
         AppIcon.Light,
-        AppIcon.Dark
+        AppIcon.Dark,
+        AppIcon.Blue,
+        AppIcon.Green,
     )
 
     fun recreateMain() {
         activities.firstOrNull { it.javaClass == MainActivity::class.java }?.recreate()
+    }
+
+    fun recreateAllActivities() {
+        activities.forEach {
+            it.recreate()
+        }
     }
 
     fun updateThemes() {
@@ -107,64 +116,26 @@ object ThemeUtil {
             activity.theme.applyStyle(R.style.Pure, true)
         }
 
-        //disable old icons
-        for (appIcon in availableIcons) {
-            val activityClass = "com.deniscerri.ytdl." + appIcon.activityAlias
-
-            // remove old icons
-            activity.packageManager.setComponentEnabledSetting(
-                ComponentName(activity.packageName, activityClass),
-                PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-                PackageManager.DONT_KILL_APP
-            )
-        }
-
-        when (sharedPreferences.getString("ytdlnis_theme", "System")!!) {
-            "System" -> {
-                //set dynamic icon
-                activity.packageManager.setComponentEnabledSetting(
-                    ComponentName(activity.packageName, "com.deniscerri.ytdl.Default"),
-                    PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
-                    PackageManager.DONT_KILL_APP
-                )
-
-                AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
-            }
+        val theme = sharedPreferences.getString("ytdlnis_theme", "System")!!
+        when (theme) {
             "Light" -> {
-                //set light icon
-                activity.packageManager.setComponentEnabledSetting(
-                    ComponentName(activity.packageName, "com.deniscerri.ytdl.LightIcon"),
-                    PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
-                    PackageManager.DONT_KILL_APP
-                )
-
                 AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
             }
             "Dark" -> {
-                //set dark icon
-                activity.packageManager.setComponentEnabledSetting(
-                    ComponentName(activity.packageName, "com.deniscerri.ytdl.DarkIcon"),
-                    PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
-                    PackageManager.DONT_KILL_APP
-                )
-
                 AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
             }
+            // or "System"
             else -> {
-                //set dynamic icon
-                activity.packageManager.setComponentEnabledSetting(
-                    ComponentName(activity.packageName, "com.deniscerri.ytdl.Default"),
-                    PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
-                    PackageManager.DONT_KILL_APP
-                )
-
                 AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
             }
         }
 
+
+        val iconMode = sharedPreferences.getString("ytdlnis_icon", "Default")!!
+        updateAppIcon(activity,theme, iconMode)
     }
 
-    private fun getThemeColor(context: Context, colorCode: Int): Int {
+    fun getThemeColor(context: Context, colorCode: Int): Int {
         val sharedPreferences = PreferenceManager.getDefaultSharedPreferences(context)
         val accent = sharedPreferences.getString("theme_accent", "blue")
         return if (accent == "blue"){
@@ -185,5 +156,65 @@ object ThemeUtil {
         val hexColor = "#%06X".format(0xFFFFFF and colorPrimary)
         return "<span  style='color:$hexColor';>YTDL</span>nis"
             .parseAsHtml(HtmlCompat.FROM_HTML_MODE_COMPACT)
+    }
+
+
+    fun updateAppIcon(activity: Activity, theme: String, appIconMode: String) {
+        //disable old icons
+        for (appIcon in availableIcons) {
+            val activityClass = "com.deniscerri.ytdl." + appIcon.activityAlias
+
+            // remove old icons
+            activity.packageManager.setComponentEnabledSetting(
+                ComponentName(activity.packageName, activityClass),
+                PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                PackageManager.DONT_KILL_APP
+            )
+        }
+
+        var iconMode = appIconMode
+        if (appIconMode == "Default") {
+            iconMode = theme
+        }
+
+        when (iconMode) {
+            "LightIcon" -> {
+                activity.packageManager.setComponentEnabledSetting(
+                    ComponentName(activity.packageName, "com.deniscerri.ytdl.LightIcon"),
+                    PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                    PackageManager.DONT_KILL_APP
+                )
+            }
+            "DarkIcon" -> {
+                activity.packageManager.setComponentEnabledSetting(
+                    ComponentName(activity.packageName, "com.deniscerri.ytdl.DarkIcon"),
+                    PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                    PackageManager.DONT_KILL_APP
+                )
+            }
+            "BlueIcon" -> {
+                activity.packageManager.setComponentEnabledSetting(
+                    ComponentName(activity.packageName, "com.deniscerri.ytdl.BlueIcon"),
+                    PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                    PackageManager.DONT_KILL_APP
+                )
+            }
+            "GreenIcon" -> {
+                activity.packageManager.setComponentEnabledSetting(
+                    ComponentName(activity.packageName, "com.deniscerri.ytdl.GreenIcon"),
+                    PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                    PackageManager.DONT_KILL_APP
+                )
+            }
+            // or "System"
+            else -> {
+                //set dynamic icon
+                activity.packageManager.setComponentEnabledSetting(
+                    ComponentName(activity.packageName, "com.deniscerri.ytdl.Default"),
+                    PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                    PackageManager.DONT_KILL_APP
+                )
+            }
+        }
     }
 }

@@ -4,10 +4,10 @@ import android.animation.AnimatorSet
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.DialogInterface
+import android.content.SharedPreferences
 import android.graphics.Canvas
 import android.graphics.Color
 import android.os.Bundle
-import android.util.Log
 import android.view.LayoutInflater
 import android.view.Menu
 import android.view.MenuItem
@@ -29,12 +29,12 @@ import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.RecyclerView
-import androidx.work.WorkManager
-import com.afollestad.materialdialogs.utils.MDUtil.getStringArray
 import com.deniscerri.ytdl.R
 import com.deniscerri.ytdl.database.models.DownloadItem
 import com.deniscerri.ytdl.database.repository.DownloadRepository
+import com.deniscerri.ytdl.database.viewmodel.DownloadCardViewModel
 import com.deniscerri.ytdl.database.viewmodel.DownloadViewModel
+import com.deniscerri.ytdl.database.viewmodel.YTDLPViewModel
 import com.deniscerri.ytdl.ui.adapter.QueuedDownloadAdapter
 import com.deniscerri.ytdl.util.Extensions.enableFastScroll
 import com.deniscerri.ytdl.util.Extensions.forceFastScrollMode
@@ -47,7 +47,6 @@ import com.google.android.material.card.MaterialCardView
 import com.google.android.material.color.MaterialColors
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.snackbar.Snackbar
-import com.yausername.youtubedl_android.YoutubeDL
 import it.xabaras.android.recyclerview.swipedecorator.RecyclerViewSwipeDecorator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
@@ -60,12 +59,15 @@ class QueuedDownloadsFragment : Fragment(), QueuedDownloadAdapter.OnItemClickLis
     private var fragmentView: View? = null
     private var activity: Activity? = null
     private lateinit var downloadViewModel : DownloadViewModel
+    private lateinit var ytdlpViewModel : YTDLPViewModel
+    private lateinit var downloadCardViewModel : DownloadCardViewModel
     private lateinit var queuedRecyclerView : RecyclerView
     private lateinit var adapter : QueuedDownloadAdapter
     private lateinit var noResults : RelativeLayout
     private lateinit var notificationUtil: NotificationUtil
     private lateinit var fileSize: TextView
     private lateinit var dragHandleToggle: TextView
+    private lateinit var sharedPreferences: SharedPreferences
     private var totalSize: Int = 0
     private var actionMode : ActionMode? = null
 
@@ -78,12 +80,15 @@ class QueuedDownloadsFragment : Fragment(), QueuedDownloadAdapter.OnItemClickLis
         activity = getActivity()
         notificationUtil = NotificationUtil(requireContext())
         downloadViewModel = ViewModelProvider(this)[DownloadViewModel::class.java]
+        ytdlpViewModel = ViewModelProvider(this)[YTDLPViewModel::class.java]
+        downloadCardViewModel = ViewModelProvider(requireActivity())[DownloadCardViewModel::class.java]
         return fragmentView
     }
 
     @SuppressLint("SetTextI18n", "RestrictedApi")
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        sharedPreferences = PreferenceManager.getDefaultSharedPreferences(requireContext())
         fileSize = view.findViewById(R.id.filesize)
         dragHandleToggle = view.findViewById(R.id.drag)
         val itemTouchHelper = ItemTouchHelper(queuedDragDropHelper)
@@ -97,7 +102,7 @@ class QueuedDownloadsFragment : Fragment(), QueuedDownloadAdapter.OnItemClickLis
         itemTouchHelper.attachToRecyclerView(queuedRecyclerView)
 
         val preferences = PreferenceManager.getDefaultSharedPreferences(requireContext())
-        if (preferences.getStringSet("swipe_gesture", requireContext().getStringArray(R.array.swipe_gestures_values).toSet())!!.toList().contains("queued")){
+        if (preferences.getStringSet("swipe_gesture", requireContext().resources.getStringArray(R.array.swipe_gestures_values).toSet())!!.toList().contains("queued")){
             val itemTouchHelper = ItemTouchHelper(simpleCallback)
             itemTouchHelper.attachToRecyclerView(queuedRecyclerView)
         }
@@ -154,7 +159,7 @@ class QueuedDownloadsFragment : Fragment(), QueuedDownloadAdapter.OnItemClickLis
                     downloadViewModel.updateDownload(item)
                 }
 
-                Snackbar.make(queuedRecyclerView, getString(R.string.cancelled) + ": " + item.title.ifEmpty { item.url }, Snackbar.LENGTH_LONG)
+                Snackbar.make(queuedRecyclerView, getString(R.string.cancelled) + ": " + item.title.ifEmpty { item.url }, Snackbar.LENGTH_INDEFINITE)
                     .setAction(getString(R.string.undo)) {
                         lifecycleScope.launch(Dispatchers.IO) {
                             downloadViewModel.deleteDownload(item.id)
@@ -210,8 +215,7 @@ class QueuedDownloadsFragment : Fragment(), QueuedDownloadAdapter.OnItemClickLis
                             val selectedObjects = getSelectedIDs()
                             adapter.clearCheckedItems()
                             for (id in selectedObjects){
-                                YoutubeDL.getInstance().destroyProcessById(id.toInt().toString())
-                                notificationUtil.cancelDownloadNotification(id.toInt())
+                                downloadViewModel.cancelDownloadOnly(id)
                             }
                             downloadViewModel.deleteAllWithID(selectedObjects)
                             actionMode?.finish()
@@ -427,13 +431,17 @@ class QueuedDownloadsFragment : Fragment(), QueuedDownloadAdapter.OnItemClickLis
 
     override fun onMoveQueuedItemToTop(itemID: Long) {
         lifecycleScope.launch {
-            downloadViewModel.putAtTopOfQueue(listOf(itemID))
+            withContext(Dispatchers.IO) {
+                downloadViewModel.putAtTopOfQueue(listOf(itemID))
+            }
         }
     }
 
     override fun onMoveQueuedItemToBottom(itemID: Long) {
         lifecycleScope.launch {
-            downloadViewModel.putAtBottomOfQueue(listOf(itemID))
+            withContext(Dispatchers.IO) {
+                downloadViewModel.putAtBottomOfQueue(listOf(itemID))
+            }
         }
     }
 
@@ -447,6 +455,8 @@ class QueuedDownloadsFragment : Fragment(), QueuedDownloadAdapter.OnItemClickLis
                 item,
                 requireActivity(),
                 DownloadRepository.Status.valueOf(item.status),
+                ytdlpViewModel,
+                sharedPreferences,
                 removeItem = { it: DownloadItem, sheet: BottomSheetDialog ->
                     sheet.hide()
                     removeItem(it.id)
@@ -464,16 +474,16 @@ class QueuedDownloadsFragment : Fragment(), QueuedDownloadAdapter.OnItemClickLis
                         withContext(Dispatchers.IO){
                             downloadViewModel.updateToStatus(it.id, DownloadRepository.Status.Saved)
                         }
+                        downloadCardViewModel.setResultItem(downloadViewModel.createResultItemFromDownload(it))
+                        downloadCardViewModel.setDownloadItem(it)
                         findNavController().navigate(R.id.downloadBottomSheetDialog, bundleOf(
-                                Pair("downloadItem", it),
-                                Pair("result", downloadViewModel.createResultItemFromDownload(it)),
                                 Pair("type", it.type)
                             )
                         )
                     }
                 },
                 scheduleButtonClick = {downloadItem ->
-                    UiUtil.showDatePicker(parentFragmentManager) {
+                    UiUtil.showDatePicker(parentFragmentManager, sharedPreferences) {
                         Toast.makeText(context, getString(R.string.download_rescheduled_to) + " " + it.time, Toast.LENGTH_LONG).show()
                         downloadViewModel.deleteDownload(downloadItem.id)
                         downloadItem.downloadStartTime = it.timeInMillis
@@ -516,20 +526,10 @@ class QueuedDownloadsFragment : Fragment(), QueuedDownloadAdapter.OnItemClickLis
 
     private fun cancelDownload(itemID: Long){
         lifecycleScope.launch {
-            cancelItem(itemID.toInt())
             withContext(Dispatchers.IO){
-                downloadViewModel.getItemByID(itemID)
-            }.let {
-                it.status = DownloadRepository.Status.Cancelled.toString()
-                withContext(Dispatchers.IO){
-                    downloadViewModel.updateDownload(it)
-                }
+                downloadViewModel.cancelDownload(itemID)
             }
         }
     }
 
-    private fun cancelItem(id: Int){
-        YoutubeDL.getInstance().destroyProcessById(id.toString())
-        notificationUtil.cancelDownloadNotification(id)
-    }
 }

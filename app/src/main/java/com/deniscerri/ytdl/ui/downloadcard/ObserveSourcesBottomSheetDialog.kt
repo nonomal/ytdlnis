@@ -18,6 +18,7 @@ import android.widget.RadioButton
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.content.res.AppCompatResources
+import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.content.edit
 import androidx.core.view.children
 import androidx.core.view.isVisible
@@ -28,15 +29,15 @@ import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager2.widget.ViewPager2
 import com.deniscerri.ytdl.R
+import com.deniscerri.ytdl.database.enums.DownloadType
 import com.deniscerri.ytdl.database.models.DownloadItem
-import com.deniscerri.ytdl.database.models.observeSources.ObserveSourcesItem
 import com.deniscerri.ytdl.database.models.ResultItem
+import com.deniscerri.ytdl.database.models.observeSources.ObserveSourcesItem
 import com.deniscerri.ytdl.database.models.observeSources.ObserveSourcesMonthlyConfig
 import com.deniscerri.ytdl.database.models.observeSources.ObserveSourcesWeeklyConfig
 import com.deniscerri.ytdl.database.repository.ObserveSourcesRepository
 import com.deniscerri.ytdl.database.viewmodel.CommandTemplateViewModel
 import com.deniscerri.ytdl.database.viewmodel.DownloadViewModel
-import com.deniscerri.ytdl.database.viewmodel.DownloadViewModel.Type
 import com.deniscerri.ytdl.database.viewmodel.HistoryViewModel
 import com.deniscerri.ytdl.database.viewmodel.ObserveSourcesViewModel
 import com.deniscerri.ytdl.database.viewmodel.ResultViewModel
@@ -72,7 +73,7 @@ class ObserveSourcesBottomSheetDialog : BottomSheetDialogFragment() {
     private lateinit var sharedPreferences : SharedPreferences
     private lateinit var view: View
 
-    private lateinit var type: Type
+    private lateinit var type: DownloadType
     private var currentItem: ObserveSourcesItem? = null
 
 
@@ -95,7 +96,6 @@ class ObserveSourcesBottomSheetDialog : BottomSheetDialogFragment() {
     private lateinit var retryMissingDownloads: MaterialSwitch
     private lateinit var getOnlyNewUploads: MaterialSwitch
     private lateinit var syncWithSource: MaterialSwitch
-    private lateinit var resetProcessedLinks: MaterialSwitch
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -113,7 +113,7 @@ class ObserveSourcesBottomSheetDialog : BottomSheetDialogFragment() {
             arguments?.getParcelable<ObserveSourcesItem>("item")
         }
 
-        type = currentItem?.downloadItemTemplate?.type ?: arguments?.getSerializable("type") as Type
+        type = currentItem?.downloadItemTemplate?.type ?: arguments?.getSerializable("type") as DownloadType
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -162,7 +162,7 @@ class ObserveSourcesBottomSheetDialog : BottomSheetDialogFragment() {
         fragmentAdapter = DownloadFragmentAdapter(
             fragmentManager,
             lifecycle,
-            ResultItem(0, "", "", "", "", "", "", "", mutableListOf(), "", null, null, null, 0),
+            ResultItem(0, "", "", "", "", "", "", "", mutableListOf(), "", listOf(), null, null, 0),
             currentItem?.downloadItemTemplate,
             true
         )
@@ -171,11 +171,11 @@ class ObserveSourcesBottomSheetDialog : BottomSheetDialogFragment() {
         viewPager2.isSaveFromParentEnabled = false
 
         when(type) {
-            Type.audio -> {
+            DownloadType.audio -> {
                 tabLayout.getTabAt(0)!!.select()
                 viewPager2.setCurrentItem(0, false)
             }
-            Type.video -> {
+            DownloadType.video -> {
                 tabLayout.getTabAt(1)!!.select()
                 viewPager2.setCurrentItem(1, false)
             }
@@ -233,7 +233,7 @@ class ObserveSourcesBottomSheetDialog : BottomSheetDialogFragment() {
                 runCatching {
                     sharedPreferences.edit(commit = true) {
                         putString("last_used_download_type",
-                            listOf(Type.audio, Type.video, Type.command)[position].toString())
+                            listOf(DownloadType.audio, DownloadType.video, DownloadType.command)[position].toString())
                     }
                 }
             }
@@ -259,7 +259,6 @@ class ObserveSourcesBottomSheetDialog : BottomSheetDialogFragment() {
         retryMissingDownloads = view.findViewById(R.id.retry_missing_downloads)
         getOnlyNewUploads = view.findViewById(R.id.get_new_uploads)
         syncWithSource = view.findViewById(R.id.sync_with_source)
-        resetProcessedLinks = view.findViewById(R.id.reset_processed_links)
         okButton = view.findViewById(R.id.okButton)
 
 //        getOnlyNewUploads.text = TextWithSubtitle(getString(R.string.get_new_uploads), getString(R.string.get_new_uploads))
@@ -296,9 +295,9 @@ class ObserveSourcesBottomSheetDialog : BottomSheetDialogFragment() {
         val cats = ObserveSourcesRepository.everyCategoryName.map { getString(it.value) }
         categoryAdapter = ArrayAdapter(requireActivity(),android.R.layout.simple_dropdown_item_1line, cats)
         everyCat.doAfterTextChanged {
-            everyTime.isVisible = it.toString() != cats[0]
-            weekDays.isVisible = it.toString() == cats[2]
-            startMonth.isVisible = it.toString() == cats[3]
+            everyTime.isVisible = it.toString() != cats[0] && it.toString() != cats[1]
+            weekDays.isVisible = it.toString() == cats[3]
+            startMonth.isVisible = it.toString() == cats[4]
             startTime.isVisible = !startMonth.isVisible
             everyMonthDay.isVisible = startMonth.isVisible
         }
@@ -315,7 +314,7 @@ class ObserveSourcesBottomSheetDialog : BottomSheetDialogFragment() {
                 isFocusable = false
                 isClickable = false
                 setOnClickListener{
-                    UiUtil.showTimePicker(fragmentManager){
+                    UiUtil.showTimePicker(fragmentManager, sharedPreferences){
                         everyTime.editText?.setText(
                             SimpleDateFormat(DateFormat.getBestDateTimePattern(Locale.getDefault(), "HHmm"), Locale.getDefault()).format(it.timeInMillis)
                         )
@@ -430,7 +429,7 @@ class ObserveSourcesBottomSheetDialog : BottomSheetDialogFragment() {
                     }
                 }
                 if (currentItem != null && currentItem!!.endsDate > 0){
-                    setText(SimpleDateFormat(DateFormat.getBestDateTimePattern(Locale.getDefault(), "HHmm"), Locale.getDefault()).format(currentItem?.endsDate))
+                    setText(SimpleDateFormat(DateFormat.getBestDateTimePattern(Locale.getDefault(), "ddMMMyyyy"), Locale.getDefault()).format(currentItem?.endsDate))
                     endsOnTime.tag = currentItem?.endsDate
                     checkIfValid()
                 }
@@ -471,7 +470,6 @@ class ObserveSourcesBottomSheetDialog : BottomSheetDialogFragment() {
         retryMissingDownloads.isChecked = currentItem?.retryMissingDownloads ?: false
         getOnlyNewUploads.isChecked = currentItem?.getOnlyNewUploads ?: false
         syncWithSource.isChecked = currentItem?.syncWithSource ?: false
-        resetProcessedLinks.isVisible = currentItem != null
 
         if (currentItem != null) okButton.text = getString(R.string.update)
         okButton.setOnClickListener {
@@ -489,7 +487,7 @@ class ObserveSourcesBottomSheetDialog : BottomSheetDialogFragment() {
                     endsAfterCount = endsAfterNr.editText!!.text.toString().toInt()
                 }
 
-                val category = ObserveSourcesRepository.EveryCategory.values()[categoryAdapter.getPosition(everyCat.text.toString())]
+                val category = ObserveSourcesRepository.EveryCategory.entries[categoryAdapter.getPosition(everyCat.text.toString())]
 
                 val observeItem = ObserveSourcesItem(
                     id = currentItem?.id ?: 0,
@@ -509,7 +507,7 @@ class ObserveSourcesBottomSheetDialog : BottomSheetDialogFragment() {
                     monthlyConfig = if (category == ObserveSourcesRepository.EveryCategory.MONTH){
                         ObserveSourcesMonthlyConfig(
                             everyMonthDay = everyMonthDay.editText!!.text.toString().toInt(),
-                            startsMonth = startMonthAutoCompleteTextView.selectionStart
+                            startsMonth = months.indexOf(startMonthAutoCompleteTextView.text.toString()).coerceAtLeast(0)
                         )
                     }else{
                         null
@@ -522,12 +520,8 @@ class ObserveSourcesBottomSheetDialog : BottomSheetDialogFragment() {
                     getOnlyNewUploads = getOnlyNewUploads.isChecked,
                     syncWithSource = syncWithSource.isChecked,
                     retryMissingDownloads = retryMissingDownloads.isChecked,
-                    alreadyProcessedLinks = if (resetProcessedLinks.isChecked){
-                        mutableListOf()
-                    }else{
-                        currentItem?.alreadyProcessedLinks ?: mutableListOf()
-                    },
-                    ignoredLinks = if (resetProcessedLinks.isChecked || !getOnlyNewUploads.isChecked){
+                    alreadyProcessedLinks = currentItem?.alreadyProcessedLinks ?: mutableListOf(),
+                    ignoredLinks = if (!getOnlyNewUploads.isChecked){
                         mutableListOf()
                     }else{
                         currentItem?.ignoredLinks ?: mutableListOf()
@@ -535,7 +529,7 @@ class ObserveSourcesBottomSheetDialog : BottomSheetDialogFragment() {
                 )
 
                 withContext(Dispatchers.IO){
-                    observeSourcesViewModel.insert(observeItem)
+                    observeSourcesViewModel.insertUpdate(observeItem)
                 }
                 dismiss()
             }
@@ -549,15 +543,18 @@ class ObserveSourcesBottomSheetDialog : BottomSheetDialogFragment() {
         val url = url.editText?.text?.isNotBlank() == true
         val category = ObserveSourcesRepository.EveryCategory.values()[categoryAdapter.getPosition(everyCat.text.toString())]
 
-        val everyNr = everyNr.editText?.text?.isNotBlank() == true
+        val everyNrBool = everyNr.editText!!.text.isNotBlank() && everyNr.editText!!.text.toString() != "0"
         val everyTime = everyTime.editText?.text?.isNotBlank() == true
 
         val every = when(category){
+            ObserveSourcesRepository.EveryCategory.MINUTE -> {
+                everyNrBool
+            }
             ObserveSourcesRepository.EveryCategory.HOUR -> {
-                everyNr
+                everyNrBool
             }
             else -> {
-                everyNr && everyTime
+                everyNrBool && everyTime
             }
         }
 

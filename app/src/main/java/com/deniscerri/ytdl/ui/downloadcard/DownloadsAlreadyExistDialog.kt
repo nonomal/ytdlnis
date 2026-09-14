@@ -29,7 +29,6 @@ import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.elevation.SurfaceColors
-import com.google.android.material.snackbar.Snackbar
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -168,13 +167,16 @@ class DownloadsAlreadyExistDialog : BottomSheetDialogFragment(), AlreadyExistsAd
             val historyItem = withContext(Dispatchers.IO){
                 downloadViewModel.getHistoryItemById(historyItemID)
             }
-            UiUtil.showHistoryItemDetailsCard(historyItem, requireActivity(), isPresent = true,
-                removeItem = { item, deleteFile ->
-                    historyViewModel.delete(item, deleteFile)
-                },
-                redownloadItem = { },
-                redownloadShowDownloadCard = {}
-            )
+
+            historyItem?.apply {
+                UiUtil.showHistoryItemDetailsCard(historyItem, requireActivity(), isPresent = true, preferences,
+                    removeItem = { item, deleteFile ->
+                        historyViewModel.delete(item, deleteFile)
+                    },
+                    redownloadItem = { },
+                    redownloadShowDownloadCard = {}
+                )
+            }
         }
     }
 }

@@ -1,8 +1,6 @@
 package com.deniscerri.ytdl.util
 
-import android.R.attr.mimeType
-import android.app.Activity
-import android.content.ContentResolver
+import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
 import android.media.MediaScannerConnection
@@ -10,17 +8,12 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.DocumentsContract
-import android.util.DisplayMetrics
+import android.provider.MediaStore
 import android.util.Log
-import android.view.ViewGroup
-import android.view.Window
 import android.webkit.MimeTypeMap
-import android.widget.LinearLayout
-import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.FileProvider
 import androidx.core.net.toUri
-import androidx.core.view.isVisible
 import androidx.documentfile.provider.DocumentFile
 import androidx.preference.PreferenceManager
 import com.anggrayudi.storage.callback.FileCallback
@@ -29,26 +22,19 @@ import com.anggrayudi.storage.file.copyFolderTo
 import com.anggrayudi.storage.file.getAbsolutePath
 import com.anggrayudi.storage.file.moveFileTo
 import com.deniscerri.ytdl.App
-import com.deniscerri.ytdl.BuildConfig
-import com.deniscerri.ytdl.MainActivity
 import com.deniscerri.ytdl.R
-import com.deniscerri.ytdl.util.Extensions.getMediaDuration
-import com.deniscerri.ytdl.util.Extensions.toStringDuration
-import com.google.android.material.bottomsheet.BottomSheetDialog
-import com.yausername.youtubedl_android.YoutubeDLRequest
+import com.deniscerri.ytdl.core.models.YTDLRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.internal.closeQuietly
-import okhttp3.internal.lowercase
 import java.io.File
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
-import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
-import java.util.*
+import java.util.Locale
 import kotlin.io.path.absolutePathString
 import kotlin.math.log10
 import kotlin.math.pow
@@ -61,6 +47,37 @@ object FileUtil {
             if (!File(path).delete()){
                 DocumentFile.fromSingleUri(App.instance, Uri.parse(path))?.delete()
             }
+            deleteFileFromMediaStore(path)
+        }
+    }
+
+    private fun deleteFileFromMediaStore(path: String) {
+        val contentResolver = App.instance.contentResolver
+        val file = File(path)
+        val uri = MediaStore.Files.getContentUri("external")
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // Query by DATA first to find the exact MediaStore row ID, then delete by ID
+            val projection = arrayOf(MediaStore.MediaColumns._ID)
+            val selection = MediaStore.MediaColumns.DATA + " =?"
+            val selectionArgs = arrayOf(file.absolutePath)
+
+            val rowUri = contentResolver.query(uri, projection, selection, selectionArgs, null)
+                ?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID))
+                        ContentUris.withAppendedId(uri, id)
+                    } else null
+                }
+
+            if (rowUri != null) {
+                contentResolver.delete(rowUri, null, null)
+            }
+        } else {
+            // Pre-Q: DATA column is reliable
+            val selection = MediaStore.MediaColumns.DATA + " =?"
+            val selectionArgs = arrayOf(file.absolutePath)
+            contentResolver.delete(uri, selection, selectionArgs)
         }
     }
 
@@ -85,7 +102,7 @@ object FileUtil {
         val pieces = dataValue.split("/").toTypedArray()
         val formattedPath = StringBuilder("/storage/")
         if (pieces[0] == "primary"){
-            formattedPath.append("emulated/0/")
+            formattedPath.append("emulated/${android.os.Binder.getCallingUserHandle().hashCode()}/")
         }else{
             formattedPath.append(pieces[0]).append("/")
         }
@@ -108,7 +125,10 @@ object FileUtil {
                 if (it.isDirectory && it.absolutePath == originDir.absolutePath) return@forEach
                 var destFile: DocumentFile
                 try {
-                    if (it.name.matches("(^config.*.\\.txt\$)|(rList)|(.*.part-Frag.*)|(.*.live_chat)|(.*.ytdl)".toRegex())){
+                    if (
+                        it.name.matches("(^config.*.\\.txt\$)|(rList)|(.*.part-Frag.*)|(.*.live_chat)|(.*.ytdl)".toRegex())
+                        || it.length() == 0L
+                        ){
                         return@forEach
                     }
 
@@ -282,22 +302,52 @@ object FileUtil {
         return listOf()
     }
 
+    fun getBackupPath(context: Context) : String {
+        val preference = PreferenceManager.getDefaultSharedPreferences(context).getString("backup_path", "")
+        val path = if (preference.isNullOrBlank()) {
+            getDefaultApplicationPath() + "/Backups"
+        }else {
+            formatPath(preference)
+        }
+        return path
+    }
+
     fun getCachePath(context: Context) : String {
-        val externalPath = context.getExternalFilesDir(null)
-        return if (externalPath == null){
-            context.cacheDir.absolutePath + "/downloads/"
-        }else{
-            externalPath.absolutePath + "/downloads/"
+        val preference = PreferenceManager.getDefaultSharedPreferences(context).getString("cache_path", "")
+        if (preference.isNullOrBlank()) {
+            val externalPath = context.getExternalFilesDir(null)
+            return if (externalPath == null){
+                context.cacheDir.absolutePath + "/ytdlnis_cache/"
+            }else{
+                externalPath.absolutePath + "/ytdlnis_cache/"
+            }
+        }else {
+            return formatPath(preference)
         }
     }
 
-    fun deleteConfigFiles(request: YoutubeDLRequest) {
+    fun getCacheDownloadsPath(context: Context): String {
+        return "${getCachePath(context)}dl"
+    }
+
+    fun getCacheYTDLPPath(context: Context) : String {
+        return "${getCachePath(context)}yt-dlp"
+    }
+
+    fun getInfoJsonPath(context: Context) : String {
+        return "${getCachePath(context)}infojsons"
+    }
+
+    fun deleteConfigFiles(request: YTDLRequest) {
         runCatching {
             request.getArguments("--config")?.forEach {
                 if (it != null) File(it).delete()
             }
             request.getArguments("--config-locations")?.forEach {
                 if (it != null) File(it).delete()
+            }
+            request.getArguments("-o")?.firstOrNull { it?.startsWith("infojson:") == true }?.apply {
+                File(this.removePrefix("infojson:")).delete()
             }
         }
     }
@@ -312,6 +362,14 @@ object FileUtil {
 
     fun getDefaultCommandPath() : String {
         return Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)?.absolutePath + File.separator + "YTDLnis/Command"
+    }
+
+    fun getDefaultApksPath() : String {
+        return Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)?.absolutePath + File.separator + "YTDLnis/Apks"
+    }
+
+    fun getDefaultApplicationPath() : String {
+        return Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)?.absolutePath + File.separator + "YTDLnis"
     }
 
     fun getDownloadArchivePath(context: Context) : String {
@@ -329,6 +387,10 @@ object FileUtil {
 
     fun getDefaultTerminalPath() : String {
         return Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)?.absolutePath + File.separator + "YTDLnis/TERMINAL_CACHE"
+    }
+
+    fun getBundledYTDLPPluginsPath(context: Context) : String {
+        return File(context.filesDir, "yt_dlp_plugins").absolutePath
     }
 
     fun getCookieFile(context : Context, ignoreIfExists: Boolean = false,  path: (path: String) -> Unit){

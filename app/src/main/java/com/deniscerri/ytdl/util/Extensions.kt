@@ -4,10 +4,10 @@ import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.app.Dialog
 import android.content.Context
+import android.content.pm.PackageManager
 import android.content.res.Resources
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Outline
 import android.graphics.Paint
 import android.graphics.PorterDuff
@@ -17,8 +17,10 @@ import android.graphics.drawable.shapes.OvalShape
 import android.media.MediaMetadataRetriever
 import android.media.MediaMetadataRetriever.METADATA_KEY_DURATION
 import android.net.Uri
-import android.text.Html
+import android.os.Build
+import android.text.Editable
 import android.text.Spanned
+import android.text.TextWatcher
 import android.util.DisplayMetrics
 import android.util.TypedValue
 import android.view.MotionEvent
@@ -30,6 +32,7 @@ import android.widget.EditText
 import android.widget.ImageView
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.annotation.OptIn
 import androidx.annotation.Px
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.DrawableCompat
@@ -41,21 +44,34 @@ import androidx.recyclerview.widget.RecyclerView
 import com.deniscerri.ytdl.App
 import com.deniscerri.ytdl.R
 import com.deniscerri.ytdl.database.models.DownloadItem
-import com.deniscerri.ytdl.database.models.Format
 import com.deniscerri.ytdl.database.models.observeSources.ObserveSourcesItem
 import com.deniscerri.ytdl.database.repository.DownloadRepository
+import com.deniscerri.ytdl.database.repository.ObserveSourcesRepository
 import com.deniscerri.ytdl.database.repository.ObserveSourcesRepository.EveryCategory
-import com.deniscerri.ytdl.util.Extensions.isYoutubeURL
-import com.deniscerri.ytdl.util.Extensions.toTimePeriodsArray
+import com.google.android.material.appbar.MaterialToolbar
+import com.google.android.material.badge.BadgeDrawable
+import com.google.android.material.badge.BadgeUtils
+import com.google.android.material.badge.ExperimentalBadgeUtils
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.google.android.material.chip.Chip
 import com.google.android.material.tabs.TabLayout
-import com.neo.highlight.core.Highlight
-import com.neo.highlight.util.listener.HighlightTextWatcher
-import com.neo.highlight.util.scheme.ColorScheme
+import com.google.gson.stream.JsonReader
+import com.google.gson.stream.JsonToken
+import com.neoutils.highlight.core.Highlight
+import com.neoutils.highlight.core.scheme.TextColorScheme
+import com.neoutils.highlight.core.util.UiColor
+import com.neoutils.highlight.view.extension.applyTo
+import com.neoutils.highlight.view.extension.removeAllSpans
+import com.neoutils.highlight.view.extension.toSpannedString
 import com.squareup.picasso.Picasso
+import jp.wasabeef.picasso.transformations.BlurTransformation
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
 import me.zhanghai.android.fastscroll.FastScrollerBuilder
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.net.HttpCookie
@@ -63,7 +79,10 @@ import java.util.Calendar
 import java.util.Locale
 import java.util.regex.Pattern
 import kotlin.math.abs
-import kotlin.math.min
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 
 
 object Extensions {
@@ -72,28 +91,57 @@ object Extensions {
         return (metrics.density * px).toInt()
     }
 
-    private var textHighLightSchemes = listOf(
-        ColorScheme(Pattern.compile("([\"'])(?:\\\\1|.)*?\\1"), Color.parseColor("#FC8500")),
-        ColorScheme(Pattern.compile("yt-dlp"), Color.parseColor("#77eb09")),
-        ColorScheme(Pattern.compile("(https?://(?:www\\.|(?!www))[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\\.[^\\s]{2,}|www\\.[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\\.[^\\s]{2,}|https?://(?:www\\.|(?!www))[a-zA-Z0-9]+\\.[^\\s]{2,}|www\\.[a-zA-Z0-9]+\\.[^\\s]{2,})"), Color.parseColor("#b5942f")),
-        ColorScheme(Pattern.compile("\\d+(\\.\\d)?%"), Color.parseColor("#43a564"))
+    private var textHighlightSchemes = listOf(
+        TextColorScheme(
+            regex = "([\"'])(?:\\\\1|.)*?\\1".toRegex(),
+            matcher = com.neoutils.highlight.core.util.Matcher.fully(UiColor.Hex("#FC8500"))),
+        TextColorScheme(
+            regex = "(yt-dlp)|(ffmpeg)|(deno)|(python)".toRegex(),
+            matcher = com.neoutils.highlight.core.util.Matcher.fully(UiColor.Hex("#77eb09"))),
+        TextColorScheme(
+            regex = "(https?://(?:www\\.|(?!www))[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\\.[^\\s]{2,}|www\\.[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\\.[^\\s]{2,}|https?://(?:www\\.|(?!www))[a-zA-Z0-9]+\\.[^\\s]{2,}|www\\.[a-zA-Z0-9]+\\.[^\\s]{2,})".toRegex(),
+            matcher = com.neoutils.highlight.core.util.Matcher.fully(UiColor.Hex("#b5942f"))),
+        TextColorScheme(
+            regex = "\\d+(\\.\\d)?%".toRegex(),
+            matcher = com.neoutils.highlight.core.util.Matcher.fully(UiColor.Hex("#43a564"))),
     )
 
     fun View.enableTextHighlight(){
         if (this is EditText || this is TextView){
             //init syntax highlighter
-            val highlight = Highlight()
-            val highlightWatcher = HighlightTextWatcher()
+            val highlight = Highlight(textHighlightSchemes)
+            val highlightWatcher = object : TextWatcher {
+                override fun beforeTextChanged(
+                    p0: CharSequence?,
+                    p1: Int,
+                    p2: Int,
+                    p3: Int
+                ) = Unit
 
-            highlight.addScheme(
-                *textHighLightSchemes.map { it }.toTypedArray()
-            )
-            highlightWatcher.addScheme(
-                *textHighLightSchemes.map { it }.toTypedArray()
-            )
+                override fun onTextChanged(
+                    p0: CharSequence?,
+                    p1: Int,
+                    p2: Int,
+                    p3: Int
+                ) = Unit
 
-            highlight.setSpan(this as TextView)
-            this.addTextChangedListener(highlightWatcher)
+                override fun afterTextChanged(p0: Editable?) {
+                    p0?.apply {
+                        kotlin.runCatching {
+                            removeAllSpans()
+                            highlight.applyTo(this)
+                        }
+                    }
+                }
+            }
+
+            if (this is EditText) {
+                this.addTextChangedListener(highlightWatcher)
+                this.setText(highlight.toSpannedString(this.text.toString()))
+            }else if (this is TextView) {
+                this.addTextChangedListener(highlightWatcher)
+                this.text = highlight.toSpannedString(this.text.toString())
+            }
         }
     }
 
@@ -212,7 +260,13 @@ object Extensions {
         tags.forEach {
             runCatching {
                 val tmp = this.getString(it)
-                if (tmp != "null") return tmp
+                if (tmp != "null") {
+                    return try {
+                        Json.decodeFromString<List<String>>(tmp).distinct().joinToString(", ")
+                    } catch (e: Exception) {
+                        tmp
+                    }
+                }
             }
         }
 
@@ -248,6 +302,51 @@ object Extensions {
         animator.start()
     }
 
+    fun dpToPx(resources: Resources, dp: Float): Int {
+        return TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP,
+            dp,
+            resources.displayMetrics
+        ).toInt()
+    }
+
+    @OptIn(ExperimentalBadgeUtils::class)
+    fun Chip.createBadge(context: Context, nr: Int) {
+        this.overlay.clear()
+        if (nr > 0) {
+            val badge = BadgeDrawable.create(context).apply {
+                number = nr
+                badgeTextColor = context.getColor(R.color.black)
+                backgroundColor = context.getColor(R.color.white)
+                verticalOffset = dpToPx(context.resources, 20f)
+                horizontalOffset =
+                    if (nr < 10) dpToPx(context.resources, 16f)
+                    else if (nr < 100) dpToPx(context.resources, 19f)
+                    else dpToPx(context.resources, 22f)
+            }
+            BadgeUtils.attachBadgeDrawable(badge, this)
+        }
+    }
+
+    @OptIn(ExperimentalBadgeUtils::class)
+    fun MaterialToolbar.updateMenuItemBadge(menuItemId: Int, nr: Int) {
+        this.findViewById<View>(menuItemId).overlay.clear()
+
+        val badge = BadgeDrawable.create(context).apply {
+            number = nr
+            backgroundColor = ContextCompat.getColor(context, R.color.white)
+            badgeTextColor = ContextCompat.getColor(context, R.color.black)
+            verticalOffset = dpToPx(resources, 4f)
+            horizontalOffset = dpToPx(resources, 4f)
+        }
+
+        if (nr > 0) {
+            BadgeUtils.attachBadgeDrawable(badge, this, menuItemId)
+        } else {
+            BadgeUtils.detachBadgeDrawable(badge, this, menuItemId)
+        }
+    }
+
     fun TabLayout.Tab.createBadge(nr: Int){
         removeBadge()
         if (nr > 0) {
@@ -267,20 +366,28 @@ object Extensions {
         val finishingProgressLinesRegex = Pattern.compile("\\[download]\\h+(100%|[a-zA-Z])")
 
         if (line.isNotBlank()) {
-            var newLine = ""
-            val newLines = line.lines()
-            if (!lines.takeLast(3).any { newLines.contains(it) }) {
-                lines.addAll(newLines.dropLast(1))
-                newLine = "\n${newLines.last()}"
+            var newline = ""
+            val newLines = line.lines().filter { !lines.contains(it) }
+            lines.addAll(newLines)
+            if (newLines.isNotEmpty()) {
+                newLines.last().apply {
+                    //common text in yt-dlp and aria2c progress
+                    if (this.contains("[download") || this.contains(") CN:")) {
+                        newline = "\n${this}"
+                    }
+                }
             }
 
-            return lines.dropLastWhile {
-                it.contains("[download") && !finishingProgressLinesRegex.matcher(it).find()
-            }.joinToString("\n") + newLine
+
+            return lines.distinct().filterNot {
+                ((it.contains("[download") || it.contains(") CN:")) && !finishingProgressLinesRegex.matcher(it).find())
+                || it.contains("does not pass filter (id")
+            }.joinToString("\n") + newline
         }
 
         return lines.filterNot {
-            it.contains("[download") && !finishingProgressLinesRegex.matcher(it).find()
+            ((it.contains("[download") || it.contains(") CN:")) && !finishingProgressLinesRegex.matcher(it).find())
+            || it.contains("does not pass filter (id")
         }.joinToString("\n")
     }
 
@@ -290,6 +397,22 @@ object Extensions {
                 Picasso.get()
                     .load(imageURL)
                     .resize(1280, 0)
+                    .onlyScaleDown()
+                    .into(this)
+
+            } else {
+                Picasso.get().load(R.color.black).into(this)
+            }
+        }
+    }
+
+    fun ImageView.loadBlurryThumbnail(context: Context, hideThumb: Boolean, imageURL: String) {
+        if(!hideThumb){
+            if (imageURL.isNotEmpty()) {
+                Picasso.get()
+                    .load(imageURL)
+                    .resize(1280, 0)
+                    .transform(BlurTransformation(context, 1, 1))
                     .onlyScaleDown()
                     .into(this)
 
@@ -335,44 +458,47 @@ object Extensions {
         )
     }
 
-    fun Long.toStringTimeStamp() : String {
-        var tmp = this
-        val millis = ((tmp % 1000) / 100).toInt()
-        tmp /= 1000
-        val hours = (tmp / 3600).toInt()
-        tmp %= 3600
-        val minutes = (tmp / 60).toInt()
-        tmp %= 60
-        val seconds = tmp.toInt()
+    fun Long.toStringTimeStamp(forceMillis: Boolean = false, showMillisIfNonZero : Boolean = false): String {
+        return this.milliseconds.toComponents { hours, minutes, seconds, nanoseconds ->
+            buildString {
+                if (hours > 0) {
+                    append(hours)
+                    append(':')
+                }
+                append(minutes.toString().padStart(if (hours > 0) 2 else 1, '0'))
+                append(':')
+                append(seconds.toString().padStart(2, '0'))
 
-        var res = "${minutes.toString().padStart(if (hours > 0) 2 else 1, '0')}:${seconds.toString().padStart(2, '0')}"
-        if (hours > 0){
-            res = "${hours}:" + res
+                val millis = nanoseconds / 1_000_000
+                if (forceMillis || showMillisIfNonZero && millis > 0) {
+                    append('.')
+                    var millisString = millis.toString().padStart(3, '0')
+                    if (showMillisIfNonZero) millisString = millisString.trimEnd('0')
+                    append(millisString)
+                }
+            }
         }
-        if (millis > 0){
-            res += ".${millis}"
-        }
-
-        return res
     }
 
-    fun String.convertToTimestamp() : Long {
-        return try {
-            val timeArray = this.split(":")
-            val secondsMillis = timeArray[timeArray.lastIndex]
-            var timeSeconds = secondsMillis.split(".")[0].toLong()
-            val millis = kotlin.runCatching { secondsMillis.split(".")[1].toInt() }.getOrElse { 0 }
+    fun String.convertToTimestamp(): Long =
+        kotlin.runCatching { tryConvertToTimestamp() }.getOrNull() ?: 0L
 
-            var times = 60
-            for (i in timeArray.lastIndex - 1 downTo 0) {
-                timeSeconds += timeArray[i].toInt() * times
-                times *= 60
-            }
+    private val timeRegex =
+        Regex("""^(?:(?:(\d+):)?(\d{1,2}):)?(\d+)(?:\.(\d+))?$""")
 
-            (timeSeconds * 1000) + millis * 100
-        }catch (e: Exception){
-            e.printStackTrace()
-            0L
+    fun String.tryConvertToTimestamp(): Long? {
+        try {
+            val match = timeRegex.matchEntire(this.trim()) ?: return null
+
+            val hours = match.groups[1]?.value?.toInt() ?: 0
+            val minutes = match.groups[2]?.value?.toInt() ?: 0
+            val seconds = match.groups[3]!!.value.toInt()
+            val millis = match.groups[4]?.value
+                ?.take(3)?.padEnd(3,'0')?.toInt() ?: 0
+
+            return (hours.hours + minutes.minutes + seconds.seconds + millis.milliseconds).inWholeMilliseconds
+        }catch (ex: Exception) {
+            return null
         }
     }
 
@@ -409,10 +535,11 @@ object Extensions {
         // Get the Set-Cookie header format
         return cookie.toString()
     }
-    
+
     fun ObserveSourcesItem.calculateNextTimeForObserving() : Long {
         val item = this
         val now = System.currentTimeMillis()
+        var everyNr = item.everyNr
         Calendar.getInstance().apply {
             timeInMillis = item.startsTime
 
@@ -421,48 +548,71 @@ object Extensions {
                 hourMin.timeInMillis = item.everyTime
 
                 set(Calendar.HOUR_OF_DAY, hourMin.get(Calendar.HOUR_OF_DAY))
-                set(Calendar.MINUTE, hourMin.get(Calendar.MINUTE))
+
+                if (item.everyCategory != EveryCategory.MINUTE) {
+                    set(Calendar.MINUTE, hourMin.get(Calendar.MINUTE))
+                }
             }
 
             while (timeInMillis < now){
                 when(item.everyCategory){
-                    EveryCategory.HOUR -> {
-                        add(Calendar.HOUR, item.everyNr)
-                    }
-                    EveryCategory.DAY -> {
-                        add(Calendar.DAY_OF_MONTH, item.everyNr)
-                    }
+                    EveryCategory.MINUTE -> { add(Calendar.MINUTE, everyNr) }
+                    EveryCategory.HOUR -> { add(Calendar.HOUR, everyNr) }
+                    EveryCategory.DAY  -> { add(Calendar.DAY_OF_MONTH, everyNr) }
                     EveryCategory.WEEK -> {
                         item.weeklyConfig?.apply {
                             if (this.weekDays.isEmpty()){
-                                add(Calendar.DAY_OF_MONTH, 7 * item.everyNr)
+                                add(Calendar.DAY_OF_MONTH, 7 * everyNr)
                             }else{
                                 var weekDayNr = get(Calendar.DAY_OF_WEEK) - 1
                                 if (weekDayNr == 0) weekDayNr = 7
                                 val followingWeekDay = this.weekDays.firstOrNull { it > weekDayNr }
                                 if (followingWeekDay == null){
                                     add(Calendar.DAY_OF_MONTH, this.weekDays.minBy { it } + (7 - weekDayNr))
-                                    item.everyNr--
+                                    everyNr--
                                 }else{
-                                    add(Calendar.DAY_OF_MONTH, followingWeekDay.toInt() - weekDayNr)
+                                    add(Calendar.DAY_OF_MONTH, followingWeekDay - weekDayNr)
                                 }
-
-                                if (item.everyNr > 1){
-                                    add(Calendar.DAY_OF_MONTH, 7 * item.everyNr)
+                                if (everyNr > 1){
+                                    add(Calendar.DAY_OF_MONTH, 7 * everyNr)
                                 }
                             }
                         }
                     }
                     EveryCategory.MONTH -> {
-                        add(Calendar.MONTH, item.everyNr)
-                        item.monthlyConfig?.apply {
-                            set(Calendar.DAY_OF_MONTH, this.everyMonthDay)
-                        }
+                        add(Calendar.MONTH, everyNr)
+                        item.monthlyConfig?.apply { set(Calendar.DAY_OF_MONTH, this.everyMonthDay) }
                     }
                 }
             }
-
             return timeInMillis
+        }
+    }
+
+    enum class ObserveSourceDisplayStatus { ACTIVE, PAUSED, FINISHED }
+
+    // Same condition the worker uses to decide it's done (ObserveSourceWorker.kt:216-218)
+    fun ObserveSourcesItem.hasReachedEnd(now: Long = System.currentTimeMillis()): Boolean {
+        return (endsAfterCount > 0 && runCount >= endsAfterCount) ||
+                (endsDate > 0 && now >= endsDate)
+    }
+
+    fun ObserveSourcesItem.displayStatus(): ObserveSourceDisplayStatus {
+        return when {
+            status == ObserveSourcesRepository.SourceStatus.ACTIVE -> ObserveSourceDisplayStatus.ACTIVE
+            hasReachedEnd() -> ObserveSourceDisplayStatus.FINISHED
+            else -> ObserveSourceDisplayStatus.PAUSED
+        }
+    }
+
+    fun ObserveSourcesItem.scheduleSummary(context: Context): String {
+        val nr = everyNr
+        return when (everyCategory) {
+            EveryCategory.MINUTE  -> context.resources.getQuantityString(R.plurals.every_minutes, nr, nr)
+            EveryCategory.HOUR  -> context.resources.getQuantityString(R.plurals.every_hours, nr, nr)
+            EveryCategory.DAY   -> context.resources.getQuantityString(R.plurals.every_days, nr, nr)
+            EveryCategory.WEEK  -> context.resources.getQuantityString(R.plurals.every_weeks, nr, nr)
+            EveryCategory.MONTH -> context.resources.getQuantityString(R.plurals.every_months, nr, nr)
         }
     }
 
@@ -503,4 +653,137 @@ object Extensions {
         return Pattern.compile("((^(https?)://)?(www.)?(m.)?youtu(.be)?(be.com))/@[a-zA-Z]+").matcher(this).find()
     }
 
+    fun String.isYoutubeWatchVideosURL() : Boolean {
+        return Pattern.compile("((^(https?)://)?(www.)?(m.)?youtu(.be)?(be.com))/watch_videos\\?video_ids=.*").matcher(this).find()
+    }
+
+    fun String.isSoundCloudURL() : Boolean {
+        return Pattern.compile("""^(https?://)?(www\.|m\.)?soundcloud\.com/[\w\-.]+(/[\w\-.]+)*/?$""").matcher(this).find()
+    }
+
+    fun String.extractURL() : String {
+        val res =
+            Pattern.compile("(http|ftp|https)://([\\w_-]+(?:\\.[\\w_-]+)+)([\\w.,@?^=%&:/~+#-]*[\\w@?^=%&/~+#-])")
+                .matcher(this)
+        return if (res.find()) {
+            res.group()
+        } else {
+            this
+        }
+    }
+
+    fun String.isURL(): Boolean {
+        return Pattern.compile("(http|ftp|https)://([\\w_-]+(?:\\.[\\w_-]+)+)([\\w.,@?^=%&:/~+#-]*[\\w@?^=%&/~+#-])").matcher(this).find()
+    }
+
+    fun <T1, T2, T3, T4, T5, T6, T7, R> combine(
+        flow: Flow<T1>,
+        flow2: Flow<T2>,
+        flow3: Flow<T3>,
+        flow4: Flow<T4>,
+        flow5: Flow<T5>,
+        flow6: Flow<T6>,
+        flow7: Flow<T7>,
+        transform: suspend (T1, T2, T3, T4, T5, T6, T7) -> R
+    ): Flow<R> = combine(
+        flow,
+        combine(flow2, flow3, ::Pair),
+        combine(flow4, flow5, ::Pair),
+        combine(flow6, flow7, ::Pair),
+    ) { t1, t2, t3, t4 ->
+        transform(
+            t1,
+            t2.first,
+            t2.second,
+            t3.first,
+            t3.second,
+            t4.first,
+            t4.second
+        )
+    }
+
+
+    fun DownloadItem.needsDataUpdating() : Boolean {
+        return this.title.isBlank() || this.author.isBlank() || this.thumb.isBlank()
+    }
+
+    fun String.applyFilenameTemplateForCuts() : String {
+        return if(this.isBlank()) {
+            "%(section_title&{} - |)s%(title).170B"
+        }else {
+            if(this.startsWith("%(section_title&{} - |)s")) this
+            else "%(section_title&{} - |)s$this"
+        }
+    }
+
+    fun String.getIDFromYoutubeURL() : String? {
+        val regex = Regex(
+            "(?:youtube\\.com/(?:[^/]+/.+/|(?:v|e(?:mbed)?|(?:shorts)?)/|.*?[?&]v=)|youtu\\.be/)([^\"&?/\\s]{11})"
+        )
+        val match = regex.find(this)
+        return if (match != null){
+            match.groupValues[1]
+        }else {
+            null
+        }
+    }
+
+    fun readJsonValue(reader: JsonReader, skipKeys: Set<String> = setOf()): Any {
+        return when (reader.peek()) {
+            JsonToken.BEGIN_ARRAY -> {
+                val array = JSONArray()
+                reader.beginArray()
+                while (reader.hasNext()) {
+                    array.put(readJsonValue(reader))
+                }
+                reader.endArray()
+                array
+            }
+            JsonToken.BEGIN_OBJECT -> {
+                val obj = JSONObject()
+                reader.beginObject()
+                while (reader.hasNext()) {
+                    val name = reader.nextName()
+                    if (name in skipKeys) {
+                        reader.skipValue()   // never parsed, never allocated
+                        continue
+                    }
+                    obj.put(name, readJsonValue(reader))
+                }
+                reader.endObject()
+                obj
+            }
+            JsonToken.STRING -> reader.nextString()
+            JsonToken.NUMBER -> {
+                val raw = reader.nextString()
+                raw.toLongOrNull() ?: raw.toDoubleOrNull() ?: raw
+            }
+            JsonToken.BOOLEAN -> reader.nextBoolean()
+            JsonToken.NULL -> {
+                reader.nextNull()
+                JSONObject.NULL
+            }
+            else -> {
+                reader.skipValue()
+                JSONObject.NULL
+            }
+        }
+    }
+
+    fun String.hasPermission(context: Context) : Boolean {
+        val packageInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.packageManager.getPackageInfo(
+                context.packageName,
+                PackageManager.PackageInfoFlags.of(PackageManager.GET_PERMISSIONS.toLong())
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            context.packageManager.getPackageInfo(
+                context.packageName,
+                PackageManager.GET_PERMISSIONS
+            )
+        }
+
+        return packageInfo.requestedPermissions?.contains(this) ?: false
+    }
 }

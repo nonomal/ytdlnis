@@ -3,7 +3,6 @@ package com.deniscerri.ytdl.database
 import android.content.Context
 import androidx.room.AutoMigration
 import androidx.room.Database
-import androidx.room.DeleteTable
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
@@ -21,11 +20,11 @@ import com.deniscerri.ytdl.database.models.CookieItem
 import com.deniscerri.ytdl.database.models.DownloadItem
 import com.deniscerri.ytdl.database.models.HistoryItem
 import com.deniscerri.ytdl.database.models.LogItem
-import com.deniscerri.ytdl.database.models.observeSources.ObserveSourcesItem
 import com.deniscerri.ytdl.database.models.ResultItem
 import com.deniscerri.ytdl.database.models.SearchHistoryItem
 import com.deniscerri.ytdl.database.models.TemplateShortcut
 import com.deniscerri.ytdl.database.models.TerminalItem
+import com.deniscerri.ytdl.database.models.observeSources.ObserveSourcesItem
 
 @TypeConverters(Converters::class)
 @Database(
@@ -41,7 +40,7 @@ import com.deniscerri.ytdl.database.models.TerminalItem
         TerminalItem::class,
         ObserveSourcesItem::class
    ],
-    version = 19,
+    version = 28,
     autoMigrations = [
         AutoMigration (from = 1, to = 2),
         AutoMigration (from = 2, to = 3),
@@ -61,6 +60,15 @@ import com.deniscerri.ytdl.database.models.TerminalItem
         AutoMigration (from = 16, to = 17),
         AutoMigration (from = 17, to = 18),
         AutoMigration (from = 18, to = 19),
+        AutoMigration (from = 19, to = 20),
+        //AutoMigration (from = 20, to = 21) MANUALLY HANDLED
+        //AutoMigration(from = 21, to = 22) MANUALLY HANDLED
+        //AutoMigration(from = 22, to = 23) MANUALLY HANDLED
+        //AutoMigration(from = 23, to = 24) MANUALLY HANDLED
+        //AutoMigration(from = 24, to = 25) MANUALLY HANDLED
+        //AutoMigration(from = 25, to = 26) MANUALLY HANDLED
+        AutoMigration(from = 26, to = 27),
+        AutoMigration(from = 27, to = 28)
     ]
 )
 abstract class DBManager : RoomDatabase(){
@@ -91,6 +99,7 @@ abstract class DBManager : RoomDatabase(){
                     DBManager::class.java,
                     "YTDLnisDatabase"
                 )
+                    .addTypeConverter(Converters())
                     .addMigrations(*Migrations.migrationList)
                     .build()
                 instance = dbInstance

@@ -6,21 +6,24 @@ import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.ClipData
-import android.content.ClipData.Item
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.DialogInterface
 import android.content.Intent
-import android.content.res.ColorStateList
-import android.graphics.Canvas
+import android.content.SharedPreferences
+import android.content.pm.PackageManager
+import android.graphics.drawable.Drawable
 import android.net.Uri
 import android.os.Build
 import android.text.Editable
 import android.text.TextWatcher
 import android.text.format.DateFormat
+import android.text.method.DigitsKeyListener
+import android.text.method.LinkMovementMethod
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.Gravity
+import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
@@ -30,52 +33,57 @@ import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.PopupMenu
+import android.widget.ProgressBar
+import android.widget.RadioButton
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.ActivityResultLauncher
 import androidx.annotation.DimenRes
 import androidx.annotation.OptIn
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.content.res.AppCompatResources
-import androidx.cardview.widget.CardView
-import androidx.compose.ui.graphics.Color
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.content.FileProvider
+import androidx.core.view.children
 import androidx.core.view.isVisible
+import androidx.core.widget.doAfterTextChanged
 import androidx.core.widget.doOnTextChanged
-import androidx.documentfile.provider.DocumentFile
 import androidx.fragment.app.FragmentManager
 import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.lifecycleScope
 import androidx.preference.PreferenceManager
-import androidx.recyclerview.widget.GridLayoutManager
-import androidx.recyclerview.widget.ItemTouchHelper
-import androidx.recyclerview.widget.RecyclerView
 import com.afollestad.materialdialogs.utils.MDUtil.getStringArray
+import com.afollestad.materialdialogs.utils.MDUtil.textChanged
 import com.deniscerri.ytdl.R
+import com.deniscerri.ytdl.core.packages.PackageBase
+import com.deniscerri.ytdl.database.enums.DownloadType
 import com.deniscerri.ytdl.database.models.CommandTemplate
 import com.deniscerri.ytdl.database.models.DownloadItem
 import com.deniscerri.ytdl.database.models.Format
+import com.deniscerri.ytdl.database.models.GithubRelease
 import com.deniscerri.ytdl.database.models.HistoryItem
-import com.deniscerri.ytdl.database.models.RestoreAppDataItem
+import com.deniscerri.ytdl.database.models.PackageItem
 import com.deniscerri.ytdl.database.models.TemplateShortcut
+import com.deniscerri.ytdl.database.models.observeSources.ObserveSourcesItem
 import com.deniscerri.ytdl.database.repository.DownloadRepository
 import com.deniscerri.ytdl.database.viewmodel.CommandTemplateViewModel
-import com.deniscerri.ytdl.database.viewmodel.DownloadViewModel
 import com.deniscerri.ytdl.database.viewmodel.HistoryViewModel
-import com.deniscerri.ytdl.database.viewmodel.ResultViewModel
-import com.deniscerri.ytdl.ui.adapter.AlreadyExistsAdapter
-import com.deniscerri.ytdl.ui.downloadcard.ConfigureDownloadBottomSheetDialog
+import com.deniscerri.ytdl.database.viewmodel.YTDLPViewModel
 import com.deniscerri.ytdl.ui.downloadcard.VideoCutListener
-import com.deniscerri.ytdl.util.Extensions.enableFastScroll
+import com.deniscerri.ytdl.ui.downloadcard.crop.VideoCropListener
+import com.deniscerri.ytdl.util.Extensions.calculateNextTimeForObserving
+import com.deniscerri.ytdl.util.Extensions.createBadge
+import com.deniscerri.ytdl.util.Extensions.displayStatus
 import com.deniscerri.ytdl.util.Extensions.enableTextHighlight
 import com.deniscerri.ytdl.util.Extensions.getMediaDuration
+import com.deniscerri.ytdl.util.Extensions.hasPermission
+import com.deniscerri.ytdl.util.Extensions.scheduleSummary
 import com.deniscerri.ytdl.util.Extensions.toStringDuration
-import com.deniscerri.ytdl.util.extractors.PipedApiUtil
-import com.deniscerri.ytdl.util.extractors.YTDLPUtil
 import com.google.android.material.badge.BadgeDrawable
 import com.google.android.material.badge.BadgeUtils
 import com.google.android.material.badge.ExperimentalBadgeUtils
-import com.google.android.material.bottomappbar.BottomAppBar
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.button.MaterialButton
@@ -87,30 +95,33 @@ import com.google.android.material.datepicker.DateValidatorPointForward
 import com.google.android.material.datepicker.MaterialDatePicker
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.floatingactionbutton.FloatingActionButton
+import com.google.android.material.imageview.ShapeableImageView
 import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.snackbar.Snackbar
 import com.google.android.material.textfield.TextInputLayout
-import com.google.android.material.textfield.TextInputLayout.END_ICON_NONE
-import com.google.android.material.textfield.TextInputLayout.EndIconMode
 import com.google.android.material.timepicker.MaterialTimePicker
 import com.google.android.material.timepicker.TimeFormat
+import io.noties.markwon.AbstractMarkwonPlugin
+import io.noties.markwon.Markwon
+import io.noties.markwon.MarkwonConfiguration
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.JsonObject
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
-import java.util.Queue
-import java.util.function.Predicate
 
 
 object UiUtil {
     @SuppressLint("SetTextI18n")
-    fun populateFormatCard(context: Context, formatCard : MaterialCardView, chosenFormat: Format, audioFormats: List<Format>?){
+    //return filesize
+    fun populateFormatCard(context: Context, formatCard : MaterialCardView, chosenFormat: Format, audioFormats: List<Format>? = null, showSize: Boolean = true) : Long {
         var formatNote = chosenFormat.format_note
         if (formatNote.isEmpty()) formatNote = context.getString(R.string.defaultValue)
         else if (formatNote == "best") formatNote = context.getString(R.string.best_quality)
@@ -168,10 +179,29 @@ object UiUtil {
         var filesize = chosenFormat.filesize
         if (!audioFormats.isNullOrEmpty() && filesize > 10L) filesize += audioFormats.sumOf { it.filesize }
         formatCard.findViewById<TextView>(R.id.file_size).apply {
-            text = FileUtil.convertFileSize(filesize)
+            if (showSize) {
+                text = FileUtil.convertFileSize(filesize)
+            }else{
+                text = "?"
+            }
             setOnClickListener {
                 formatCard.callOnClick()
             }
+        }
+
+        formatCard.findViewById<TextView>(R.id.bitrate).apply {
+            if (chosenFormat.tbr.isNullOrBlank() || (chosenFormat.vcodec.isNotBlank() && chosenFormat.vcodec != "none")) {
+                isVisible = false
+            }else{
+                isVisible = true
+                text = chosenFormat.tbr
+            }
+        }
+
+        if (showSize) {
+            return filesize
+        }else {
+            return 0
         }
 
     }
@@ -195,14 +225,22 @@ object UiUtil {
         bottomSheet.requestWindowFeature(Window.FEATURE_NO_TITLE)
         bottomSheet.setContentView(R.layout.create_command_template)
 
+        val sharedPreferences = PreferenceManager.getDefaultSharedPreferences(context)
+
         val ok : Button = bottomSheet.findViewById(R.id.template_create)!!
         val title : TextInputLayout = bottomSheet.findViewById(R.id.title)!!
         val content : TextInputLayout = bottomSheet.findViewById(R.id.content)!!
+        val preferredCommandSwitch : MaterialSwitch = bottomSheet.findViewById(R.id.preferredCommandTemplateSwitch)!!
         val extraCommandsSwitch : MaterialSwitch = bottomSheet.findViewById(R.id.extraCommandsSwitch)!!
         val extraCommandsAudio : CheckBox = bottomSheet.findViewById(R.id.checkbox_audio)!!
         val extraCommandsVideo : CheckBox = bottomSheet.findViewById(R.id.checkbox_video)!!
+        val extraCommandsDataFetchingSwitch : MaterialSwitch = bottomSheet.findViewById(R.id.extraCommandDataFetching)!!
         val shortcutsChipGroup : ChipGroup = bottomSheet.findViewById(R.id.shortcutsChipGroup)!!
         val editShortcuts : Button = bottomSheet.findViewById(R.id.edit_shortcuts)!!
+        val urlRegex : TextInputLayout = bottomSheet.findViewById(R.id.url_regex)!!
+        val urlRegexChips : ChipGroup = bottomSheet.findViewById(R.id.urlRegexChipGroup)!!
+
+        extraCommandsDataFetchingSwitch.isVisible = sharedPreferences.getBoolean("enable_data_fetching_extra_commands", false)
 
         if (item != null){
             title.editText!!.setText(item.title)
@@ -261,6 +299,9 @@ object UiUtil {
         }
 
         if (item != null){
+            preferredCommandSwitch.isChecked = item.preferredCommandTemplate
+            extraCommandsDataFetchingSwitch.isChecked = item.useAsExtraCommandDataFetching && extraCommandsDataFetchingSwitch.isVisible
+
             extraCommandsSwitch.isChecked = item.useAsExtraCommand
             if (item.useAsExtraCommand){
                 extraCommandsAudio.isVisible = true
@@ -273,14 +314,39 @@ object UiUtil {
                 extraCommandsVideo.isVisible = false
                 extraCommandsVideo.isChecked = false
             }
+
+            val canUseURLRegex = item.useAsExtraCommand || item.useAsExtraCommandDataFetching || item.preferredCommandTemplate
+            urlRegex.isVisible = canUseURLRegex
+            urlRegexChips.isVisible = canUseURLRegex
+
+            for(chip in item.urlRegex) {
+                val tmp = context.layoutInflater.inflate(R.layout.input_chip, urlRegexChips, false) as Chip
+                tmp.text = chip
+                tmp.setOnClickListener {
+                    urlRegexChips.removeView(tmp)
+                }
+                urlRegexChips.addView(tmp)
+            }
         }
+
+         preferredCommandSwitch.setOnCheckedChangeListener { compoundButton, b ->
+             val canUseURLRegex = extraCommandsSwitch.isChecked || extraCommandsDataFetchingSwitch.isChecked || preferredCommandSwitch.isChecked
+             urlRegex.isVisible = canUseURLRegex
+             urlRegexChips.isVisible = canUseURLRegex
+         }
 
          extraCommandsSwitch.setOnCheckedChangeListener { compoundButton, b ->
              extraCommandsAudio.isVisible = extraCommandsSwitch.isChecked
              extraCommandsAudio.isChecked = true
              extraCommandsVideo.isVisible = extraCommandsSwitch.isChecked
              extraCommandsVideo.isChecked = true
+
+             val canUseURLRegex = extraCommandsSwitch.isChecked || extraCommandsDataFetchingSwitch.isChecked || preferredCommandSwitch.isChecked
+             urlRegex.isVisible = canUseURLRegex
+             urlRegexChips.isVisible = canUseURLRegex
          }
+
+
 
          extraCommandsAudio.setOnCheckedChangeListener { compoundButton, b ->
              ok.isEnabled = (extraCommandsAudio.isChecked || extraCommandsVideo.isChecked) && title.editText!!.text.isNotEmpty() && content.editText!!.text.isNotEmpty()
@@ -290,13 +356,35 @@ object UiUtil {
              ok.isEnabled = (extraCommandsAudio.isChecked || extraCommandsVideo.isChecked) && title.editText!!.text.isNotEmpty() && content.editText!!.text.isNotEmpty()
          }
 
+         extraCommandsDataFetchingSwitch.setOnCheckedChangeListener { compoundButton, b ->
+             val canUseURLRegex = extraCommandsSwitch.isChecked || extraCommandsDataFetchingSwitch.isChecked || preferredCommandSwitch.isChecked
+             urlRegex.isVisible = canUseURLRegex
+             urlRegexChips.isVisible = canUseURLRegex
+         }
+
+         urlRegex.isEndIconVisible = false
+         urlRegex.editText!!.doOnTextChanged { text, start, before, count ->
+             urlRegex.isEndIconVisible = urlRegex.editText!!.text.isNotBlank()
+         }
+
+         urlRegex.setEndIconOnClickListener {
+             val text = urlRegex.editText!!.text
+             urlRegex.editText!!.setText("")
+             val tmp = context.layoutInflater.inflate(R.layout.input_chip, urlRegexChips, false) as Chip
+             tmp.text = text
+             tmp.setOnClickListener {
+                 urlRegexChips.removeView(tmp)
+             }
+             urlRegexChips.addView(tmp)
+         }
+
         commandTemplateViewModel.shortcuts.observe(lifeCycle){
             shortcutsChipGroup.removeAllViews()
             it.forEach {shortcut ->
                 val chip = context.layoutInflater.inflate(R.layout.suggestion_chip, shortcutsChipGroup, false) as Chip
                 chip.text = shortcut.content
                 chip.setOnClickListener {
-                    content.editText!!.text.insert(content.editText!!.selectionStart, shortcut.content + " ")
+                    content.editText!!.text.insert(content.editText!!.selectionStart, shortcut.content)
                 }
                 shortcutsChipGroup.addView(chip)
             }
@@ -307,8 +395,20 @@ object UiUtil {
         }
 
         ok.setOnClickListener {
+            val urlRegexes = urlRegexChips.children.map { (it as Chip).text.toString() }.toMutableList()
             if (item == null){
-                val t = CommandTemplate(0, title.editText!!.text.toString(), content.editText!!.text.toString(), extraCommandsSwitch.isChecked, extraCommandsAudio.isChecked, extraCommandsVideo.isChecked)
+
+                val t = CommandTemplate(
+                    0,
+                    title.editText!!.text.toString(),
+                    content.editText!!.text.toString(),
+                    extraCommandsSwitch.isChecked,
+                    extraCommandsAudio.isChecked,
+                    extraCommandsVideo.isChecked,
+                    extraCommandsDataFetchingSwitch.isChecked,
+                    preferredCommandSwitch.isChecked,
+                    urlRegexes
+                )
                 commandTemplateViewModel.insert(t)
                 newTemplate(t)
             }else{
@@ -317,7 +417,9 @@ object UiUtil {
                 item.useAsExtraCommand = extraCommandsSwitch.isChecked
                 item.useAsExtraCommandAudio = extraCommandsAudio.isChecked
                 item.useAsExtraCommandVideo = extraCommandsVideo.isChecked
-                Log.e("aa", item.toString())
+                item.useAsExtraCommandDataFetching = extraCommandsDataFetchingSwitch.isChecked
+                item.preferredCommandTemplate = preferredCommandSwitch.isChecked
+                item.urlRegex = urlRegexes
                 commandTemplateViewModel.update(item)
                 newTemplate(item)
             }
@@ -412,7 +514,7 @@ object UiUtil {
         datePicker.show(fragmentManager, "datepicker")
     }
 
-    fun showDatePicker(fragmentManager: FragmentManager , onSubmit : (chosenDate: Calendar) -> Unit ){
+    fun showDatePicker(fragmentManager: FragmentManager , preferences: SharedPreferences, onSubmit : (chosenDate: Calendar) -> Unit ){
         val currentDate = Calendar.getInstance()
         currentDate.timeInMillis = (currentDate.timeInMillis - (currentDate.timeInMillis % 1800000)) + 1800000
         val date = Calendar.getInstance()
@@ -429,38 +531,35 @@ object UiUtil {
         datePicker.addOnPositiveButtonClickListener{
             date.timeInMillis = it
 
-
-            val timepicker = MaterialTimePicker.Builder()
-                .setTimeFormat(TimeFormat.CLOCK_24H)
-                .setHour(currentDate.get(Calendar.HOUR_OF_DAY))
-                .setMinute(currentDate.get(Calendar.MINUTE))
-                .build()
-
-            timepicker.addOnPositiveButtonClickListener{
-                date[Calendar.HOUR_OF_DAY] = timepicker.hour
-                date[Calendar.MINUTE] = timepicker.minute
+            showTimePicker(fragmentManager, preferences) { chosenTime ->
+                date[Calendar.HOUR_OF_DAY] = chosenTime[Calendar.HOUR_OF_DAY]
+                date[Calendar.MINUTE] = chosenTime[Calendar.MINUTE]
                 onSubmit(date)
             }
-            timepicker.show(fragmentManager, "timepicker")
 
         }
         datePicker.show(fragmentManager, "datepicker")
     }
 
-    fun showTimePicker(fragmentManager: FragmentManager , onSubmit : (chosenTime: Calendar) -> Unit ){
+    fun showTimePicker(fragmentManager: FragmentManager , preferences: SharedPreferences, onSubmit : (chosenTime: Calendar) -> Unit ){
         val currentDate = Calendar.getInstance()
         currentDate.timeInMillis = (currentDate.timeInMillis - (currentDate.timeInMillis % 1800000)) + 1800000
         val date = Calendar.getInstance()
 
+        val lastTime = preferences.getString("latest_timepicker_date", "${currentDate.get(Calendar.HOUR_OF_DAY)}:${currentDate.get(Calendar.MINUTE)}")!!
+        val hour = lastTime.split(":")[0].toInt()
+        val minute = lastTime.split(":")[1].toInt()
+
         val timepicker = MaterialTimePicker.Builder()
             .setTimeFormat(TimeFormat.CLOCK_24H)
-            .setHour(currentDate.get(Calendar.HOUR_OF_DAY))
-            .setMinute(currentDate.get(Calendar.MINUTE))
+            .setHour(hour)
+            .setMinute(minute)
             .build()
 
         timepicker.addOnPositiveButtonClickListener{
             date[Calendar.HOUR_OF_DAY] = timepicker.hour
             date[Calendar.MINUTE] = timepicker.minute
+            preferences.edit().putString("latest_timepicker_date", "${timepicker.hour}:${timepicker.minute}").apply()
             onSubmit(date)
         }
         timepicker.show(fragmentManager, "timepicker")
@@ -470,6 +569,8 @@ object UiUtil {
         item: DownloadItem,
         context: Activity,
         status: DownloadRepository.Status,
+        ytdlpViewModel: YTDLPViewModel,
+        preferences: SharedPreferences,
         removeItem : (DownloadItem, BottomSheetDialog) -> Unit,
         downloadItem: (DownloadItem) -> Unit,
         longClickDownloadButton: (DownloadItem) -> Unit,
@@ -479,7 +580,7 @@ object UiUtil {
         bottomSheet.requestWindowFeature(Window.FEATURE_NO_TITLE)
         bottomSheet.setContentView(R.layout.history_item_details_bottom_sheet)
         bottomSheet.findViewById<TextView>(R.id.bottom_sheet_title)?.apply {
-            text = item.title.ifEmpty { item.url.ifEmpty { item.playlistTitle.ifEmpty {  "`${context.getString(R.string.defaultValue)}`" } } }
+            text = item.title.ifEmpty { item.playlistTitle.ifEmpty { item.url.ifEmpty { "`${context.getString(R.string.defaultValue)}`" } } }
             setOnLongClickListener {
                 showFullTextDialog(context, text.toString(), context.getString(R.string.title))
                 true
@@ -497,10 +598,10 @@ object UiUtil {
         val btn = bottomSheet.findViewById<FloatingActionButton>(R.id.download_button_type)
         val typeImageResource: Int =
             when (item.type) {
-                DownloadViewModel.Type.audio -> {
+                DownloadType.audio -> {
                     R.drawable.ic_music
                 }
-                DownloadViewModel.Type.video -> {
+                DownloadType.video -> {
                     R.drawable.ic_video
                 }
                 else -> {
@@ -510,6 +611,7 @@ object UiUtil {
         btn?.setImageResource(typeImageResource)
 
         val time = bottomSheet.findViewById<Chip>(R.id.time)
+        val thumbnail = bottomSheet.findViewById<Chip>(R.id.thumbnail)
         val formatNote = bottomSheet.findViewById<Chip>(R.id.format_note)
         val container = bottomSheet.findViewById<Chip>(R.id.container_chip)
         val codec = bottomSheet.findViewById<Chip>(R.id.codec)
@@ -535,7 +637,15 @@ object UiUtil {
             }
         }
 
-        if (item.type != DownloadViewModel.Type.command){
+        thumbnail?.isVisible = item.thumb.isNotBlank()
+        thumbnail?.apply {
+            isVisible = item.thumb.isNotBlank()
+            setOnClickListener {
+                openLinkIntent(context, item.thumb)
+            }
+        }
+
+        if (item.type != DownloadType.command){
             if (item.format.format_note == "?" || item.format.format_note == "") formatNote!!.visibility =
                 View.GONE
             else formatNote!!.text = item.format.format_note
@@ -569,10 +679,8 @@ object UiUtil {
         if (fileSizeReadable == "?") fileSize!!.visibility = View.GONE
         else fileSize!!.text = fileSizeReadable
 
-        val ytdlpUtil = YTDLPUtil(context)
-
         command?.setOnClickListener {
-            showGeneratedCommand(context, ytdlpUtil.parseYTDLRequestString(ytdlpUtil.buildYoutubeDLRequest(item)))
+            showGeneratedCommand(context, preferences, ytdlpViewModel.parseYTDLRequestString(item))
         }
 
         val link = bottomSheet.findViewById<Button>(R.id.bottom_sheet_link)
@@ -614,12 +722,27 @@ object UiUtil {
                 download.setOnClickListener {
                     longClickDownloadButton(item)
                     bottomSheet.cancel()
+                }
+                download.setOnLongClickListener {
+                    longClickDownloadButton(item)
+                    bottomSheet.cancel()
                     true
                 }
             }
             DownloadRepository.Status.Scheduled -> {
                 download!!.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_downloads, 0, 0, 0);
                 download.text = context.getString(R.string.download_now)
+            }
+            DownloadRepository.Status.Error -> {
+                download?.setOnClickListener {
+                    longClickDownloadButton(item)
+                    bottomSheet.cancel()
+                }
+                download?.setOnLongClickListener {
+                    downloadItem(item)
+                    bottomSheet.cancel()
+                    true
+                }
             }
             else -> {
                 download?.setOnLongClickListener {
@@ -630,7 +753,7 @@ object UiUtil {
             }
         }
 
-        if (status != DownloadRepository.Status.Queued){
+        if (status != DownloadRepository.Status.Queued && status != DownloadRepository.Status.Error){
             download?.setOnClickListener {
                 bottomSheet.dismiss()
                 downloadItem(item)
@@ -651,6 +774,7 @@ object UiUtil {
         item: HistoryItem?,
         context: Activity,
         isPresent: Boolean,
+        preferences: SharedPreferences,
         removeItem: (item:HistoryItem, removeFiles: Boolean) -> Unit,
         redownloadItem: (HistoryItem) -> Unit,
         redownloadShowDownloadCard: (HistoryItem) -> Unit,
@@ -678,13 +802,13 @@ object UiUtil {
         val btn = bottomSheet.findViewById<FloatingActionButton>(R.id.download_button_type)
 
         val typeImageResource: Int =
-        if (item!!.type == DownloadViewModel.Type.audio) {
+        if (item!!.type == DownloadType.audio) {
             if (isPresent) {
                 R.drawable.ic_music_downloaded
             } else {
                 R.drawable.ic_music
             }
-        } else if (item.type == DownloadViewModel.Type.video) {
+        } else if (item.type == DownloadType.video) {
             if (isPresent) {
                 R.drawable.ic_video_downloaded
             } else {
@@ -719,6 +843,7 @@ object UiUtil {
         }
 
         val time = bottomSheet.findViewById<TextView>(R.id.time)
+        val thumbnail = bottomSheet.findViewById<TextView>(R.id.thumbnail)
         val formatNote = bottomSheet.findViewById<TextView>(R.id.format_note)
         val container = bottomSheet.findViewById<Chip>(R.id.container_chip)
         val codec = bottomSheet.findViewById<TextView>(R.id.codec)
@@ -732,7 +857,15 @@ object UiUtil {
         time!!.text = SimpleDateFormat(DateFormat.getBestDateTimePattern(Locale.getDefault(), "ddMMMyyyy - HHmm"), Locale.getDefault()).format(calendar.time)
         time.isClickable = false
 
-        if (item.type != DownloadViewModel.Type.command){
+        thumbnail?.isVisible = item.thumb.isNotBlank()
+        thumbnail?.apply {
+            isVisible = item.thumb.isNotBlank()
+            setOnClickListener {
+                openLinkIntent(context, item.thumb)
+            }
+        }
+
+        if (item.type != DownloadType.command){
             if (item.format.format_note == "?" || item.format.format_note == "") formatNote!!.visibility =
                 View.GONE
             else formatNote!!.text = item.format.format_note
@@ -767,7 +900,7 @@ object UiUtil {
         else fileSize!!.text = fileSizeReadable
 
         command?.setOnClickListener {
-            showGeneratedCommand(context, item.command)
+            showGeneratedCommand(context, preferences, item.command)
         }
 
         val availableFiles = item.downloadPath.filter { FileUtil.exists(it) }
@@ -846,6 +979,8 @@ object UiUtil {
         val fpsParent = bottomSheet.findViewById<ConstraintLayout>(R.id.fps_parent)
         val asrParent = bottomSheet.findViewById<ConstraintLayout>(R.id.asr_parent)
         val bitrateParent = bottomSheet.findViewById<ConstraintLayout>(R.id.bitrate_parent)
+        val widthParent = bottomSheet.findViewById<ConstraintLayout>(R.id.width_parent)
+        val heightParent = bottomSheet.findViewById<ConstraintLayout>(R.id.height_parent)
 
 
         val clicker = View.OnClickListener {
@@ -940,7 +1075,8 @@ object UiUtil {
             bitrateParent?.setOnLongClickListener(longClicker)
         }
 
-
+        widthParent?.findViewById<TextView>(R.id.width_value)?.text = format.width?.toString() ?: "?"
+        heightParent?.findViewById<TextView>(R.id.height_value)?.text = format.height?.toString() ?: "?"
 
         bottomSheet.show()
         val displayMetrics = DisplayMetrics()
@@ -953,7 +1089,7 @@ object UiUtil {
     }
 
     @SuppressLint("RestrictedApi")
-    fun showSubtitleLanguagesDialog(context: Activity, currentValue: String, ok: (newValue: String) -> Unit){
+    fun showSubtitleLanguagesDialog(context: Activity, availableSubtitles: List<String>, currentValue: String, ok: (newValue: String) -> Unit){
         val builder = MaterialAlertDialogBuilder(context)
         builder.setTitle(context.getString(R.string.subtitle_languages))
         val view = context.layoutInflater.inflate(R.layout.subtitle_dialog, null)
@@ -979,8 +1115,6 @@ object UiUtil {
             context.startActivity(browserIntent)
         }
 
-        view.findViewById<View>(R.id.suggested).visibility = View.GONE
-
         val dialog = builder.create()
         dialog.show()
         val imm = context.getSystemService(AppCompatActivity.INPUT_METHOD_SERVICE) as InputMethodManager
@@ -991,9 +1125,12 @@ object UiUtil {
 
         //handle suggestion chips
         CoroutineScope(Dispatchers.IO).launch {
-            val chipGroup = view.findViewById<ChipGroup>(R.id.subtitle_suggested_chipgroup)
-            val chips = mutableListOf<Chip>()
-            context.getStringArray(R.array.subtitle_langs).forEachIndexed { index, s ->
+            val suggestedLinearLayout = view.findViewById<LinearLayout>(R.id.suggestedLinear)
+            val suggestedChipGroup = view.findViewById<ChipGroup>(R.id.subtitle_suggested_chipgroup)
+
+            val allChipGroup = view.findViewById<ChipGroup>(R.id.subtitle_all_chipgroup)
+
+            fun buildChip(chipGroup: ChipGroup, s: String, index: Int) : Chip {
                 val tmp = context.layoutInflater.inflate(R.layout.filter_chip, chipGroup, false) as Chip
                 s.split("-", ".*").run {
                     if (s.endsWith(".*")) {
@@ -1015,31 +1152,68 @@ object UiUtil {
 
                 tmp.setOnClickListener {
                     val c = it as Chip
+                    val currentLanguages = editText.text.toString().split(",").filter { f -> f.isNotBlank() }.toMutableList()
                     if(!c.isChecked){
-                        editText.setText(editText.text.toString().replace(c.tag.toString(), "").removeSuffix(","))
+                        editText.setText(currentLanguages.filter { l -> l != c.tag }.joinToString(","))
                         editText.setSelection(editText.text.length)
                     }else{
-                        if (editText.text.isBlank()){
-                            editText.setText(c.tag.toString())
-                            editText.setSelection(editText.text.length)
-                        }else{
-                            editText.append(",${c.tag}")
-                        }
+                        currentLanguages.add(c.tag.toString())
+                        editText.setText(currentLanguages.joinToString(","))
+                        editText.setSelection(editText.text.length)
                     }
                 }
 
-                chips.add(tmp)
+                return tmp
             }
+
+            val suggestedChips = mutableListOf<Chip>()
+            val allChips = mutableListOf<Chip>()
+
+            //populate suggested
+            if (availableSubtitles.isNotEmpty()) {
+                suggestedLinearLayout.isVisible = true
+                availableSubtitles.forEachIndexed { index, s ->
+                    suggestedChips.add(buildChip(suggestedChipGroup, s, index))
+                }
+            }
+
+            //populate all
+            context.getStringArray(R.array.subtitle_langs).filter { !availableSubtitles.contains(it) }.forEachIndexed { index, s ->
+                allChips.add(buildChip(allChipGroup, s, index))
+            }
+
             withContext(Dispatchers.Main){
-                view.findViewById<View>(R.id.suggested).visibility = View.VISIBLE
-                chips.forEach {
-                    it.isChecked = editText.text.contains(it.text)
-                    chipGroup!!.addView(it)
+                suggestedChips.forEach {
+                    it.isChecked = editText.text.split(",").any { it2 -> it2 == it.tag.toString() }
+                    suggestedChipGroup!!.addView(it)
+                }
+                allChips.forEach {
+                    it.isChecked = editText.text.split(",").any { it2 -> it2 == it.tag.toString() }
+                    allChipGroup!!.addView(it)
+                }
+
+                editText.textChanged {
+                    suggestedChipGroup.children.forEach { (it as Chip).isChecked = editText.text.split(",").any { it2 -> it2 == it.tag.toString() } }
+                    allChipGroup.children.forEach { (it as Chip).isChecked = editText.text.split(",").any { it2 -> it2 == it.tag.toString() } }
                 }
             }
         }
 
         dialog.getButton(AlertDialog.BUTTON_NEUTRAL).gravity = Gravity.START
+    }
+
+    fun showAudioBitrateDialog(context: Activity, currentValue: String, ok: (newValue: String) -> Unit){
+        val entries = context.getStringArray(R.array.audio_bitrate)
+        val entryValues = context.getStringArray(R.array.audio_bitrate_values)
+        val prefIndex = entryValues.indexOf(currentValue)
+        MaterialAlertDialogBuilder(context)
+            .setTitle(context.getString(R.string.bitrate))
+            .setSingleChoiceItems(entries, prefIndex) { dialog, index ->
+                ok(entryValues[index])
+                dialog.dismiss()
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
     }
 
 
@@ -1052,7 +1226,7 @@ object UiUtil {
     }
 
 
-    suspend fun showCommandTemplates(activity: Activity, commandTemplateViewModel: CommandTemplateViewModel, itemSelected: (itemSelected: List<CommandTemplate>) -> Unit) {
+    suspend fun showCommandTemplates(activity: Activity, commandTemplateViewModel: CommandTemplateViewModel, onlyOne: Boolean = false, itemSelected: (itemSelected: List<CommandTemplate>) -> Unit) {
         val bottomSheet = BottomSheetDialog(activity)
         bottomSheet.requestWindowFeature(Window.FEATURE_NO_TITLE)
         bottomSheet.setContentView(R.layout.command_template_list)
@@ -1065,6 +1239,7 @@ object UiUtil {
         linearLayout!!.removeAllViews()
         val selectedItems = mutableListOf<CommandTemplate>()
         val ok = bottomSheet.findViewById<MaterialButton>(R.id.command_ok)
+        ok?.isVisible = !onlyOne
         ok?.isEnabled = list.size == 1
 
         list.forEach {template ->
@@ -1078,6 +1253,11 @@ object UiUtil {
                 }else{
                     selectedItems.add(template)
                     (it as MaterialCardView).isChecked = true
+                }
+
+                if (onlyOne) {
+                    itemSelected(listOf(template))
+                    bottomSheet.cancel()
                 }
 
                 ok?.isEnabled = selectedItems.isNotEmpty()
@@ -1136,68 +1316,159 @@ object UiUtil {
     fun configureVideo(
         view: View,
         context: Activity,
+        ytdlpViewModel: YTDLPViewModel,
         items: List<DownloadItem>,
         embedSubsClicked : (Boolean) -> Unit,
         addChaptersClicked: (Boolean) -> Unit,
         splitByChaptersClicked: (Boolean) -> Unit,
+        embedThumbnailClicked: (Boolean) -> Unit,
         saveThumbnailClicked: (Boolean) -> Unit,
         sponsorBlockItemsSet: (values: Array<String>, checkedItems: List<Boolean>) -> Unit,
         cutClicked: (VideoCutListener) -> Unit,
+        cutValueChanged: (String) -> Unit,
         cutDisabledClicked: () -> Unit,
+        cropClicked: (VideoCropListener) -> Unit,
+        cropValueChanged: (String) -> Unit,
+        cropDisabledClicked: () -> Unit,
         filenameTemplateSet: (String) -> Unit,
         saveSubtitlesClicked: (Boolean) -> Unit,
         saveAutoSubtitlesClicked: (Boolean) -> Unit,
+        burnSubtitlesClicked: (Boolean) -> Unit,
         subtitleLanguagesSet: (String) -> Unit,
         removeAudioClicked: (Boolean) -> Unit,
         recodeVideoClicked: (Boolean) -> Unit,
+        compatibilityModeClicked: (Boolean) -> Unit,
         alsoDownloadAsAudioClicked: (Boolean) -> Unit,
-        extraCommandsClicked: () -> Unit
+        extraCommandsClicked: (changed: (newExtraCommandString: String) -> Unit) -> Unit,
+        liveFromStart: (Boolean) -> Unit,
+        waitForVideo: (Boolean, Int) -> Unit,
     ){
         val sharedPreferences = PreferenceManager.getDefaultSharedPreferences(context)
 
-        val addChapters = view.findViewById<Chip>(R.id.add_chapters)
-        addChapters!!.isChecked = items.all { it.videoPreferences.addChapters }
-        addChapters.setOnClickListener{
-            addChaptersClicked(addChapters.isChecked)
-        }
-
-        val splitByChapters = view.findViewById<Chip>(R.id.split_by_chapters)
-        if(items.size == 1 && items[0].downloadSections.isNotBlank()){
-            splitByChapters.isEnabled = false
-            splitByChapters.isChecked = false
-        }else{
-            splitByChapters!!.isChecked = items.all { it.videoPreferences.splitByChapters }
-        }
-        if (splitByChapters.isChecked){
-            items.forEach { it.videoPreferences.addChapters = false }
-            addChapters.isChecked = false
-            addChapters.isEnabled = false
-            addChaptersClicked(false)
-        }
-        splitByChapters.setOnClickListener {
-            if (splitByChapters.isChecked){
-                addChapters.isEnabled = false
-                addChapters.isChecked = false
-                addChaptersClicked(false)
-            }else{
-                addChapters.isEnabled = true
+        val adjustThumbnail = view.findViewById<Chip>(R.id.thumbnail)
+        fun calculateAdjustThumbnailChangeCount() {
+            if (items.size == 1) {
+                val firstItem = items.first()
+                val count = listOf(
+                    firstItem.SaveThumb,
+                    firstItem.videoPreferences.embedThumbnail
+                )
+                adjustThumbnail.createBadge(context, count.filter { it }.size)
             }
-            splitByChaptersClicked(splitByChapters.isChecked)
+        }
+        calculateAdjustThumbnailChangeCount()
+        adjustThumbnail.setOnClickListener {
+            val adjustThumbnailView = context.layoutInflater.inflate(R.layout.video_thumbnail_download_preferences_dialog, null)
+            val embedThumb = adjustThumbnailView.findViewById<MaterialSwitch>(R.id.embed_thumbnail)
+            val saveThumb = adjustThumbnailView.findViewById<MaterialSwitch>(R.id.save_thumbnail)
+
+            embedThumb!!.isChecked = items.all { it.videoPreferences.embedThumbnail }
+            embedThumb.setOnClickListener {
+                embedThumbnailClicked(embedThumb.isChecked)
+                items.forEach { it.videoPreferences.embedThumbnail = embedThumb.isChecked }
+                calculateAdjustThumbnailChangeCount()
+            }
+
+            saveThumb!!.isChecked = items.all { it.SaveThumb }
+            saveThumb.setOnClickListener {
+                saveThumbnailClicked(saveThumb.isChecked)
+                items.forEach { it.SaveThumb = saveThumb.isChecked }
+                calculateAdjustThumbnailChangeCount()
+            }
+
+            val adjustThumbnailDialog = MaterialAlertDialogBuilder(context)
+                .setTitle(context.getString(R.string.thumbnail))
+                .setView(adjustThumbnailView)
+                .setIcon(R.drawable.ic_image)
+                .setNegativeButton(context.resources.getString(R.string.dismiss)) { _: DialogInterface?, _: Int -> }
+
+            adjustThumbnailDialog.show()
         }
 
-        val saveThumbnail = view.findViewById<Chip>(R.id.save_thumbnail)
-        saveThumbnail!!.isChecked = items.all { it.SaveThumb }
-        saveThumbnail.setOnClickListener {
-            saveThumbnailClicked(saveThumbnail.isChecked)
+
+        val adjustChapters = view.findViewById<Chip>(R.id.chapters)
+        fun calculateAdjustChaptersChangeCount() {
+            if (items.size == 1) {
+                val firstItem = items.first()
+                val count = listOf(
+                    firstItem.videoPreferences.addChapters,
+                    firstItem.videoPreferences.splitByChapters
+                )
+                adjustChapters.createBadge(context, count.filter { it }.size)
+            }
         }
 
+        if(items.size == 1 && items[0].downloadSections.isNotBlank()){
+            items.forEach { it.videoPreferences.splitByChapters = false }
+        }
+
+        calculateAdjustChaptersChangeCount()
+        adjustChapters.setOnClickListener {
+            val adjustChapterView = context.layoutInflater.inflate(R.layout.video_chapter_download_preferences_dialog, null)
+            val addChapters = adjustChapterView.findViewById<MaterialSwitch>(R.id.add_chapters)
+            addChapters!!.isChecked = items.all { it.videoPreferences.addChapters }
+            addChapters.setOnClickListener{
+                addChaptersClicked(addChapters.isChecked)
+                items.forEach { it.videoPreferences.addChapters = addChapters.isChecked }
+                calculateAdjustChaptersChangeCount()
+            }
+
+            val splitByChapters = adjustChapterView.findViewById<MaterialSwitch>(R.id.split_by_chapters)
+            if(items.size == 1 && items[0].downloadSections.isNotBlank()){
+                splitByChapters.isEnabled = false
+                splitByChapters.isChecked = false
+            }else{
+                splitByChapters!!.isChecked = items.all { it.videoPreferences.splitByChapters }
+            }
+            if (splitByChapters.isChecked){
+                items.forEach { it.videoPreferences.addChapters = false }
+                addChaptersClicked(false)
+
+                addChapters.isChecked = false
+                addChapters.isEnabled = false
+            }
+            splitByChapters.setOnClickListener {
+                if (splitByChapters.isChecked){
+                    addChapters.isEnabled = false
+                    addChapters.isChecked = false
+                    items.forEach { it.videoPreferences.addChapters = false }
+                    addChaptersClicked(false)
+                }else{
+                    addChapters.isEnabled = true
+                }
+                splitByChaptersClicked(splitByChapters.isChecked)
+                calculateAdjustChaptersChangeCount()
+            }
+
+            val adjustChapterDialog = MaterialAlertDialogBuilder(context)
+                .setTitle(context.getString(R.string.thumbnail))
+                .setView(adjustChapterView)
+                .setIcon(R.drawable.ic_chapters)
+                .setNegativeButton(context.resources.getString(R.string.dismiss)) { _: DialogInterface?, _: Int -> }
+
+            adjustChapterDialog.show()
+        }
 
         val adjustSubtitles = view.findViewById<Chip>(R.id.adjust_subtitles)
+        fun calculateAdjustSubtitlesChangeCount() {
+            if (items.size == 1) {
+                val firstItem = items.first()
+                val count = listOf(
+                    firstItem.videoPreferences.embedSubs,
+                    firstItem.videoPreferences.writeSubs,
+                    firstItem.videoPreferences.writeAutoSubs,
+                    firstItem.videoPreferences.burnSubs,
+                )
+                adjustSubtitles.createBadge(context, count.filter { it }.size)
+            }
+        }
+        calculateAdjustSubtitlesChangeCount()
         adjustSubtitles.setOnClickListener {
             val adjustSubtitleView = context.layoutInflater.inflate(R.layout.subtitle_download_preferences_dialog, null)
             val embedSubs = adjustSubtitleView.findViewById<MaterialSwitch>(R.id.embed_subtitles)
             val saveSubtitles = adjustSubtitleView.findViewById<MaterialSwitch>(R.id.save_subs)
             val saveAutoSubtitles = adjustSubtitleView.findViewById<MaterialSwitch>(R.id.save_auto_subs)
+            val burnSubtitles = adjustSubtitleView.findViewById<MaterialSwitch>(R.id.burn_subs)
             val subtitleLanguages = adjustSubtitleView.findViewById<ConstraintLayout>(R.id.subtitle_languages)
             val subtitleLanguagesDescription = adjustSubtitleView.findViewById<TextView>(R.id.subtitle)
             subtitleLanguagesDescription.text = items.first().videoPreferences.subsLanguages
@@ -1206,7 +1477,11 @@ object UiUtil {
             embedSubs!!.isChecked = items.all { it.videoPreferences.embedSubs }
             embedSubs.setOnClickListener {
                 subtitleLanguages.isClickable = embedSubs.isChecked || saveSubtitles.isChecked
+                burnSubtitles.isEnabled = embedSubs.isChecked
                 embedSubsClicked(embedSubs.isChecked)
+
+                items.forEach { it.videoPreferences.embedSubs = embedSubs.isChecked }
+                calculateAdjustSubtitlesChangeCount()
             }
 
             if (items.all { it.videoPreferences.writeSubs}) {
@@ -1219,14 +1494,38 @@ object UiUtil {
                 subtitleLanguages.visibility = View.VISIBLE
             }
 
+            if (items.all { it.videoPreferences.burnSubs}) {
+                burnSubtitles.isChecked = true
+            }
+
             saveSubtitles.setOnCheckedChangeListener { _, _ ->
                 subtitleLanguages.isClickable = embedSubs.isChecked || saveSubtitles.isChecked || saveAutoSubtitles.isChecked
                 saveSubtitlesClicked(saveSubtitles.isChecked)
+                items.forEach { it.videoPreferences.writeSubs = saveSubtitles.isChecked }
+
+                burnSubtitles.isEnabled = saveSubtitles.isChecked || saveAutoSubtitles.isChecked
+                if (!burnSubtitles.isEnabled) {
+                    burnSubtitles.isChecked = false
+                    burnSubtitlesClicked(burnSubtitles.isChecked)
+                    items.forEach { it.videoPreferences.burnSubs = burnSubtitles.isChecked }
+                }
+
+                calculateAdjustSubtitlesChangeCount()
             }
 
             saveAutoSubtitles.setOnCheckedChangeListener { _, _ ->
                 subtitleLanguages.isClickable = embedSubs.isChecked || saveSubtitles.isChecked || saveAutoSubtitles.isChecked
                 saveAutoSubtitlesClicked(saveAutoSubtitles.isChecked)
+                items.forEach { it.videoPreferences.writeAutoSubs = saveAutoSubtitles.isChecked }
+
+                burnSubtitles.isEnabled = saveSubtitles.isChecked || saveAutoSubtitles.isChecked
+                if (!burnSubtitles.isEnabled) {
+                    burnSubtitles.isChecked = false
+                    burnSubtitlesClicked(burnSubtitles.isChecked)
+                    items.forEach { it.videoPreferences.burnSubs = burnSubtitles.isChecked }
+                }
+
+                calculateAdjustSubtitlesChangeCount()
             }
 
             subtitleLanguages.isClickable = embedSubs.isChecked || saveSubtitles.isChecked
@@ -1235,12 +1534,20 @@ object UiUtil {
                     items[0].videoPreferences.subsLanguages
                 }else {
                     ""
-                }.ifEmpty { sharedPreferences.getString("subs_lang", "en.*,.*-orig")!! }
+                }.ifEmpty { sharedPreferences.getString("subs_lang", ".*-orig")!! }
 
-                showSubtitleLanguagesDialog(context, currentSubtitleLang){
+                val availabeSubtitles = if (items.size == 1) items[0].availableSubtitles else listOf()
+                showSubtitleLanguagesDialog(context, availabeSubtitles, currentSubtitleLang){
                     subtitleLanguagesSet(it)
                     subtitleLanguagesDescription.text = it
                 }
+            }
+
+            burnSubtitles.isEnabled = saveSubtitles.isChecked || saveAutoSubtitles.isChecked
+            burnSubtitles.setOnCheckedChangeListener { _, _ ->
+                burnSubtitlesClicked(burnSubtitles.isChecked)
+                items.forEach { it.videoPreferences.burnSubs = burnSubtitles.isChecked }
+                calculateAdjustSubtitlesChangeCount()
             }
 
             val adjustSubtitleDialog = MaterialAlertDialogBuilder(context)
@@ -1252,14 +1559,21 @@ object UiUtil {
             adjustSubtitleDialog.show()
         }
 
-        if (items.size == 1 && items.first().id == 0L){
+        if (items.size == 1){
             val adjustAudio = view.findViewById<Chip>(R.id.adjust_audio)
+            fun calculateAdjustAudioChanges() {
+                val count = listOf(items.first().videoPreferences.removeAudio, items.first().videoPreferences.alsoDownloadAsAudio)
+                adjustAudio.createBadge(context, count.filter { it }.size)
+            }
+            calculateAdjustAudioChanges()
             adjustAudio.setOnClickListener {
                 val adjustAudioView = context.layoutInflater.inflate(R.layout.audio_download_preferences_dialog, null)
                 adjustAudioView.findViewById<MaterialSwitch>(R.id.remove_audio).apply {
                     isChecked = items.first().videoPreferences.removeAudio
                     setOnCheckedChangeListener { _, b ->
                         removeAudioClicked(b)
+                        items.first().videoPreferences.removeAudio = b
+                        calculateAdjustAudioChanges()
                     }
                 }
 
@@ -1267,6 +1581,8 @@ object UiUtil {
                     isChecked = items.first().videoPreferences.alsoDownloadAsAudio
                     setOnCheckedChangeListener { _, b ->
                         alsoDownloadAsAudioClicked(b)
+                        items.first().videoPreferences.alsoDownloadAsAudio = b
+                        calculateAdjustAudioChanges()
                     }
                 }
 
@@ -1278,6 +1594,7 @@ object UiUtil {
 
                 adjustAudioDialog.show()
             }
+            adjustAudio.isEnabled = items.first().container != "gif"
         }else{
             val adjustAudio = view.findViewById<Chip>(R.id.adjust_audio)
             adjustAudio.isVisible = false
@@ -1287,17 +1604,130 @@ object UiUtil {
             removeAudio.setOnCheckedChangeListener { _, _ ->
                 removeAudioClicked(removeAudio.isChecked)
             }
+            removeAudio.isEnabled = !items.any { it.container == "gif" }
         }
 
         val recodeVideo = view.findViewById<Chip>(R.id.recode_video)
-        recodeVideo.isChecked = items.all { it.videoPreferences.recodeVideo }
-        recodeVideo.setOnCheckedChangeListener { _, _ ->
-            recodeVideoClicked(recodeVideo.isChecked)
+        fun calculateRecodeVideoChanges() {
+            if (items.size == 1) {
+                val count = listOf(items.first().videoPreferences.recodeVideo, items.first().videoPreferences.compatibilityMode)
+                recodeVideo.createBadge(context, count.filter { it }.size)
+            }
         }
+        calculateRecodeVideoChanges()
+        recodeVideo.setOnClickListener {
+            val adjustVideoView = context.layoutInflater.inflate(R.layout.video_download_preferences_dialog, null)
 
+            val recodeVideoSwitch = adjustVideoView.findViewById<MaterialSwitch>(R.id.recodeVideoSwitch)
+            val compatibilityModeSwitch = adjustVideoView.findViewById<MaterialSwitch>(R.id.compatiblityModeSwitch)
+
+            recodeVideoSwitch.apply {
+                isChecked = items.all { it.videoPreferences.recodeVideo }
+                setOnClickListener { _ ->
+                    recodeVideoClicked(isChecked)
+
+                    compatibilityModeSwitch.isChecked = false
+                    compatibilityModeClicked(false)
+                    recodeVideo.createBadge(context, if (isChecked) 1 else 0)
+                }
+            }
+
+            compatibilityModeSwitch.apply {
+                isChecked = items.first().videoPreferences.compatibilityMode
+                setOnClickListener { _ ->
+                    compatibilityModeClicked(isChecked)
+
+                    recodeVideoSwitch.isChecked = false
+                    recodeVideoClicked(false)
+                    recodeVideo.createBadge(context, if (isChecked) 1 else 0)
+                }
+            }
+
+            val adjustVideoDialog = MaterialAlertDialogBuilder(context)
+                .setTitle(context.getString(R.string.recode_video))
+                .setView(adjustVideoView)
+                .setIcon(R.drawable.baseline_video_metadata)
+                .setNegativeButton(context.resources.getString(R.string.ok)) { _: DialogInterface?, _: Int -> }
+
+            adjustVideoDialog.show()
+        }
+        recodeVideo.isEnabled = items.first().container != "gif" && items.first().videoPreferences.cropValues.isBlank()
+
+
+        val adjustLiveStream = view.findViewById<Chip>(R.id.adjust_live_stream)
+        fun calculateLiveStreamChanges() {
+            if (items.size == 1) {
+                val count = listOf(items.first().videoPreferences.waitForVideoMinutes > 0, items.first().videoPreferences.liveFromStart)
+                adjustLiveStream.createBadge(context, count.filter { it }.size)
+            }
+        }
+        calculateLiveStreamChanges()
+        if (items.size == 1) {
+            adjustLiveStream.setOnClickListener {
+                val adjustLiveStreamView = context.layoutInflater.inflate(R.layout.livestream_download_preferences_dialog, null)
+                val liveFromStartSwitch = adjustLiveStreamView.findViewById<MaterialSwitch>(R.id.live_from_start)
+                val waitForVideoSwitch = adjustLiveStreamView.findViewById<MaterialSwitch>(R.id.wait_for_video)
+                val waitForVideoSettings = adjustLiveStreamView.findViewById<View>(R.id.wait_for_video_settings)
+
+                val waitEveryNr = adjustLiveStreamView.findViewById<TextInputLayout>(R.id.every_nr).editText!!
+
+                val item = items.first()
+
+                item.videoPreferences.waitForVideoMinutes.apply {
+                    if(this > 0) {
+                        waitEveryNr.setText(this.toString())
+                    }
+                }
+
+                waitEveryNr.doOnTextChanged { text, start, before, count ->
+                    var number = 1
+                    kotlin.runCatching {
+                        number = Integer.parseInt(waitEveryNr.text.toString())
+                    }
+
+                    waitForVideo(true, number)
+                }
+
+                liveFromStartSwitch.setOnCheckedChangeListener { compoundButton, b ->
+                    liveFromStart(b)
+                    items.forEach { it.videoPreferences.liveFromStart = b }
+                    calculateLiveStreamChanges()
+                }
+
+                waitForVideoSwitch.setOnCheckedChangeListener { compoundButton, b ->
+                    waitForVideoSettings.isVisible = b
+
+                    var number = 1
+                    kotlin.runCatching {
+                        number = Integer.parseInt(waitEveryNr.text.toString())
+                    }
+
+                    waitForVideo(b, number)
+                    items.forEach { it.videoPreferences.waitForVideoMinutes = if (b) number else 0 }
+                    calculateLiveStreamChanges()
+                }
+
+                liveFromStartSwitch.isChecked = item.videoPreferences.liveFromStart
+                waitForVideoSwitch.isChecked = item.videoPreferences.waitForVideoMinutes > 0
+                waitForVideoSettings.isVisible = waitForVideoSwitch.isChecked
+
+                val adjustLiveStreamDialog = MaterialAlertDialogBuilder(context)
+                    .setTitle(context.getString(R.string.live_stream))
+                    .setView(adjustLiveStreamView)
+                    .setIcon(R.drawable.baseline_live_tv_24)
+                    .setNegativeButton(context.resources.getString(R.string.dismiss)) { _: DialogInterface?, _: Int -> }
+
+                adjustLiveStreamDialog.show()
+            }
+        }else {
+            adjustLiveStream.isVisible = false
+        }
 
         val sponsorBlock = view.findViewById<Chip>(R.id.sponsorblock_filters)
         sponsorBlock.isEnabled = sharedPreferences.getBoolean("use_sponsorblock", true)
+        if (items.size == 1 && sponsorBlock.isEnabled) {
+            sponsorBlock.createBadge(context, items.first().videoPreferences.sponsorBlockFilters.filter { it.isNotBlank() }.size)
+        }
         sponsorBlock!!.setOnClickListener {
             val builder = MaterialAlertDialogBuilder(context)
             builder.setTitle(context.getString(R.string.select_sponsorblock_filtering))
@@ -1322,6 +1752,9 @@ object UiUtil {
             builder.setPositiveButton(
                 context.getString(R.string.ok)
             ) { _: DialogInterface?, _: Int ->
+                if (items.size == 1) {
+                    sponsorBlock.createBadge(context, checkedItems.filter { it }.size)
+                }
                 sponsorBlockItemsSet(values, checkedItems)
             }
 
@@ -1337,37 +1770,27 @@ object UiUtil {
         val cut = view.findViewById<Chip>(R.id.cut)
         if (items.size > 1 || items.first().url.isEmpty()) cut.isVisible = false
         else{
-            val invalidDuration = items[0].duration == "-1"
-            if(items[0].duration.isNotEmpty() && !invalidDuration){
+            cut.setOnClickListener(null)
+            val duration = items[0].duration
+            if(duration.isNotEmpty() && duration != "-1" && duration != "0:00"){
                 val downloadItem = items[0]
                 cut.alpha = 1f
-                if (downloadItem.downloadSections.isNotBlank()) cut.text = downloadItem.downloadSections
+                if (downloadItem.downloadSections.isNotBlank()) cut.createBadge(context, downloadItem.downloadSections.count())
                 val cutVideoListener = object : VideoCutListener {
 
                     override fun onChangeCut(list: List<String>) {
+                        cut.createBadge(context, list.size)
                         if (list.isEmpty()){
-                            downloadItem.downloadSections = ""
-                            cut.text = context.getString(R.string.cut)
-
-                            splitByChapters.isEnabled = true
-                            splitByChapters.isChecked = downloadItem.videoPreferences.splitByChapters
-                            if (splitByChapters.isChecked){
-                                addChapters.isEnabled = false
-                                addChapters.isChecked = false
-                            }else{
-                                addChapters.isEnabled = true
-                            }
+                            cutValueChanged("")
                         }else{
                             var value = ""
                             list.forEach {
                                 value += "$it;"
                             }
-                            downloadItem.downloadSections = value
-                            cut.text = value.dropLast(1)
+                            cutValueChanged(value)
 
-                            splitByChapters.isEnabled = false
-                            splitByChapters.isChecked = false
-                            addChapters.isEnabled = true
+                            items.forEach { it.videoPreferences.splitByChapters = false }
+                            calculateAdjustChaptersChangeCount()
                         }
 
                     }
@@ -1377,10 +1800,40 @@ object UiUtil {
                 }
             }else{
                 cut.alpha = 0.3f
-                if (!invalidDuration) {
-                    cut.setOnClickListener {
-                        cutDisabledClicked()
+                cut.setOnClickListener {
+                    cutDisabledClicked()
+                }
+            }
+        }
+
+        val crop = view.findViewById<Chip>(R.id.crop)
+        if (items.size > 1 || items.first().url.isEmpty()) crop.isVisible = false
+        else{
+            crop.setOnClickListener(null)
+            val duration = items[0].duration
+            if(duration.isNotEmpty() && duration != "-1" && duration != "0:00"){
+                val downloadItem = items[0]
+                crop.alpha = 1f
+                if (downloadItem.videoPreferences.cropValues.isNotBlank()) crop.createBadge(context, 1)
+                val cropVideoListener = object : VideoCropListener {
+
+                    override fun onChangeCrop(x: Int, y: Int, w: Int, h: Int, refW: Int, refH: Int) {
+                        crop.createBadge(context, 1)
+                        cropValueChanged("$x:$y:$w:$h:$refW:$refH")
                     }
+
+                    override fun onClearCrop() {
+                        crop.createBadge(context, 0)
+                        cropValueChanged("")
+                    }
+                }
+                crop.setOnClickListener {
+                    cropClicked(cropVideoListener)
+                }
+            }else{
+                crop.alpha = 0.3f
+                crop.setOnClickListener {
+                    cropDisabledClicked()
                 }
             }
         }
@@ -1392,16 +1845,25 @@ object UiUtil {
             }else {
                 ""
             }
-            showFilenameTemplateDialog(context, currentFilename) {
+            val itemContext = if (items.size == 1) items.first() else null
+            showFilenameTemplateDialog(context, currentFilename, ytdlpViewModel = ytdlpViewModel, itemContext = itemContext) {
                 filenameTemplateSet(it)
             }
         }
 
         val extraCommands = view.findViewById<Chip>(R.id.extra_commands)
+        if (items.size == 1) {
+            extraCommands.createBadge(context, if (items.first().extraCommands.isNotBlank()) 1 else 0)
+        }
         if (sharedPreferences.getBoolean("use_extra_commands", false)){
             extraCommands.visibility = View.VISIBLE
             extraCommands.setOnClickListener {
-                extraCommandsClicked()
+                extraCommandsClicked { newExtraCommandString ->
+                    items.forEach { it.extraCommands = newExtraCommandString }
+                    if (items.size == 1) {
+                        extraCommands.createBadge(context, if (newExtraCommandString.isNotBlank()) 1 else 0)
+                    }
+                }
             }
         }else{
             extraCommands.visibility = View.GONE
@@ -1411,29 +1873,62 @@ object UiUtil {
     fun configureAudio(
         view: View,
         context: Activity,
+        ytdlpViewModel: YTDLPViewModel,
         items: List<DownloadItem>,
         embedThumbClicked: (Boolean) -> Unit,
         cropThumbClicked: (Boolean) -> Unit,
         splitByChaptersClicked: (Boolean) -> Unit,
+        bitrateSet: (String) -> Unit,
         filenameTemplateSet: (String) -> Unit,
         sponsorBlockItemsSet: (Array<String>, List<Boolean>) -> Unit,
         cutClicked: (VideoCutListener) -> Unit,
         cutDisabledClicked: () -> Unit,
-        extraCommandsClicked: () -> Unit
+        cutValueChanged: (String) -> Unit,
+        extraCommandsClicked: (changed: (newExtraCommandString: String) -> Unit) -> Unit
     ){
-        val embedThumb = view.findViewById<Chip>(R.id.embed_thumb)
-        val cropThumb = view.findViewById<Chip>(R.id.crop_thumb)
+        val sharedPreferences = PreferenceManager.getDefaultSharedPreferences(context)
 
-        embedThumb!!.isChecked = items.all { it.audioPreferences.embedThumb }
-        cropThumb.isVisible = embedThumb.isChecked
-        embedThumb.setOnClickListener {
-            embedThumbClicked(embedThumb.isChecked)
-            cropThumb.isVisible = embedThumb.isChecked
+        val adjustThumbnail = view.findViewById<Chip>(R.id.thumbnail)
+        fun calculateAdjustThumbnailChangeCount() {
+            if (items.size == 1) {
+                val firstItem = items.first()
+                val count = listOf(
+                    firstItem.audioPreferences.embedThumb,
+                    firstItem.audioPreferences.cropThumb
+                )
+                adjustThumbnail.createBadge(context, count.filter { it == true }.size)
+            }
         }
+        calculateAdjustThumbnailChangeCount()
+        adjustThumbnail.setOnClickListener {
+            val adjustThumbnailView = context.layoutInflater.inflate(R.layout.audio_thumbnail_download_preferences_dialog, null)
+            val embedThumb = adjustThumbnailView.findViewById<MaterialSwitch>(R.id.embed_thumbnail)
+            val cropThumb = adjustThumbnailView.findViewById<MaterialSwitch>(R.id.crop_thumbnail)
 
-        cropThumb!!.isChecked = items.all { it.audioPreferences.cropThumb == true }
-        cropThumb.setOnClickListener {
-            cropThumbClicked(cropThumb.isChecked)
+            embedThumb!!.isChecked = items.all { it.audioPreferences.embedThumb }
+            cropThumb.isVisible = embedThumb.isChecked
+
+            embedThumb.setOnClickListener {
+                embedThumbClicked(embedThumb.isChecked)
+                cropThumb.isVisible = embedThumb.isChecked
+                items.forEach { it.audioPreferences.embedThumb = embedThumb.isChecked }
+                calculateAdjustThumbnailChangeCount()
+            }
+
+            cropThumb!!.isChecked = items.all { it.audioPreferences.cropThumb == true }
+            cropThumb.setOnClickListener {
+                cropThumbClicked(cropThumb.isChecked)
+                items.forEach { it.audioPreferences.cropThumb = cropThumb.isChecked }
+                calculateAdjustThumbnailChangeCount()
+            }
+
+            val adjustThumbnailDialog = MaterialAlertDialogBuilder(context)
+                .setTitle(context.getString(R.string.thumbnail))
+                .setView(adjustThumbnailView)
+                .setIcon(R.drawable.ic_image)
+                .setNegativeButton(context.resources.getString(R.string.dismiss)) { _: DialogInterface?, _: Int -> }
+
+            adjustThumbnailDialog.show()
         }
 
         val splitByChapters = view.findViewById<Chip>(R.id.split_by_chapters)
@@ -1448,6 +1943,34 @@ object UiUtil {
             splitByChaptersClicked(splitByChapters.isChecked)
         }
 
+        val bitrate = view.findViewById<Chip>(R.id.audio_bitrate)
+        bitrate.apply {
+            fun changeLabelText(newVal: String) {
+                if(newVal.isBlank()) return
+                val t = context.getString(R.string.bitrate) + " (${newVal})"
+                text = t
+            }
+
+            fun getCurrentBitrate() = if (items.size == 1 || items.all { it.audioPreferences.bitrate == items[0].audioPreferences.bitrate }){
+                items[0].audioPreferences.bitrate
+            }else {
+                ""
+            }
+
+            changeLabelText(getCurrentBitrate())
+
+            setOnClickListener {
+                showAudioBitrateDialog(context, getCurrentBitrate()) {
+                    var newText = context.getString(R.string.bitrate)
+                    if (it.isNotBlank()) {
+                        newText += " (${it})"
+                    }
+                    text = newText
+                    bitrateSet(it)
+                }
+            }
+        }
+
         val filenameTemplate = view.findViewById<Chip>(R.id.filename_template)
         filenameTemplate.setOnClickListener {
             val currentFilename = if (items.size == 1 || items.all { it.customFileNameTemplate == items[0].customFileNameTemplate }){
@@ -1455,12 +1978,17 @@ object UiUtil {
             }else {
                 ""
             }
-            showFilenameTemplateDialog(context, currentFilename) {
+            val itemContext = if (items.size == 1) items.first() else null
+            showFilenameTemplateDialog(context, currentFilename, ytdlpViewModel = ytdlpViewModel, itemContext = itemContext) {
                 filenameTemplateSet(it)
             }
         }
 
         val sponsorBlock = view.findViewById<Chip>(R.id.sponsorblock_filters)
+        sponsorBlock.isEnabled = sharedPreferences.getBoolean("use_sponsorblock", true)
+        if (items.size == 1 && sponsorBlock.isEnabled) {
+            sponsorBlock.createBadge(context, items.first().audioPreferences.sponsorBlockFilters.filter { it.isNotBlank() }.size)
+        }
         sponsorBlock!!.setOnClickListener {
             val builder = MaterialAlertDialogBuilder(context)
             builder.setTitle(context.getString(R.string.select_sponsorblock_filtering))
@@ -1485,6 +2013,9 @@ object UiUtil {
             builder.setPositiveButton(
                 context.getString(R.string.ok)
             ) { _: DialogInterface?, _: Int ->
+                if (items.size == 1) {
+                    sponsorBlock.createBadge(context, checkedItems.filter { it }.size)
+                }
                 sponsorBlockItemsSet(values, checkedItems)
             }
 
@@ -1500,16 +2031,20 @@ object UiUtil {
         val cut = view.findViewById<Chip>(R.id.cut)
         if (items.size > 1 || items.first().url.isEmpty()) cut.isVisible = false
         else{
+            cut.setOnClickListener(null)
             val downloadItem = items[0]
-            val invalidDuration = downloadItem.duration == "-1"
-            if (downloadItem.duration.isNotEmpty() && !invalidDuration){
+            val duration = downloadItem.duration
+            if (duration.isNotEmpty() && duration != "-1" && duration != "0:00"){
                 cut.alpha = 1f
-                if (downloadItem.downloadSections.isNotBlank()) cut.text = downloadItem.downloadSections
+                if (downloadItem.downloadSections.isNotBlank()) {
+                    cut.createBadge(context, downloadItem.downloadSections.count())
+                }
                 val cutVideoListener = object : VideoCutListener {
                     override fun onChangeCut(list: List<String>) {
+                        cut.createBadge(context, list.size)
                         if (list.isEmpty()){
-                            downloadItem.downloadSections = ""
-                            cut.text = context.getString(R.string.cut)
+                            cutValueChanged("")
+
 
                             splitByChapters.isEnabled = true
                             splitByChapters.isChecked = downloadItem.audioPreferences.splitByChapters
@@ -1518,8 +2053,7 @@ object UiUtil {
                             list.forEach {
                                 value += "$it;"
                             }
-                            downloadItem.downloadSections = value
-                            cut.text = value.dropLast(1)
+                            cutValueChanged(value)
 
                             splitByChapters.isEnabled = false
                             splitByChapters.isChecked = false
@@ -1532,22 +2066,25 @@ object UiUtil {
 
             }else{
                 cut.alpha = 0.3f
-                if (!invalidDuration) {
-                    cut.setOnClickListener {
-                        cutDisabledClicked()
-                    }
+                cut.setOnClickListener {
+                    cutDisabledClicked()
                 }
             }
         }
 
-
-
         val extraCommands = view.findViewById<Chip>(R.id.extra_commands)
-        val sharedPreferences = PreferenceManager.getDefaultSharedPreferences(context)
+        if (items.size == 1) {
+            extraCommands.createBadge(context, if (items.first().extraCommands.isNotBlank()) 1 else 0)
+        }
         if (sharedPreferences.getBoolean("use_extra_commands", false)){
             extraCommands.visibility = View.VISIBLE
             extraCommands.setOnClickListener {
-                extraCommandsClicked()
+                extraCommandsClicked { newExtraCommandString ->
+                    items.forEach { it.extraCommands = newExtraCommandString }
+                    if (items.size == 1) {
+                        extraCommands.createBadge(context, if (newExtraCommandString.isNotBlank()) 1 else 0)
+                    }
+                }
             }
         }else{
             extraCommands.visibility = View.GONE
@@ -1582,8 +2119,7 @@ object UiUtil {
         }
     }
 
-
-    fun handleNoResults(context: Activity, message: String, continueAnyway: Boolean = false, continued: () -> Unit, closed: () -> Unit) {
+    fun handleNoResults(context: Activity, message: String, url: String? = null, continueAnyway: Boolean = false, continued: () -> Unit, closed: () -> Unit, cookieFetch: () -> Unit) {
         val errDialog = MaterialAlertDialogBuilder(context)
             .setTitle(R.string.no_results)
             .setMessage(message)
@@ -1594,11 +2130,18 @@ object UiUtil {
             d?.dismiss()
         }
 
-        if (continueAnyway) {
+        val cookieRelated = message.contains("cookie", true) || message.contains("sign in", true)
+        if (cookieRelated && !url.isNullOrBlank()) {
+            errDialog.setNeutralButton(context.getString(R.string.get_cookies)) { d: DialogInterface?, _ : Int ->
+                cookieFetch()
+            }
+        }else if (continueAnyway) {
             errDialog.setNeutralButton(R.string.continue_anyway) {d: DialogInterface?, _:Int ->
                 continued()
             }
         }
+
+
 
         errDialog.setOnCancelListener {
             closed()
@@ -1632,6 +2175,27 @@ object UiUtil {
         deleteDialog.show()
     }
 
+    fun showGenericConfirmDialog(context: Context, title: String, content:String, accepted: () -> Unit){
+        val deleteDialog = MaterialAlertDialogBuilder(context)
+        deleteDialog.setTitle(title)
+        deleteDialog.setMessage(content)
+        deleteDialog.setNegativeButton(context.getString(R.string.cancel)) { dialogInterface: DialogInterface, _: Int -> dialogInterface.cancel() }
+        deleteDialog.setPositiveButton(context.getString(R.string.continue_anyway)) { _: DialogInterface?, _: Int ->
+            accepted()
+        }
+        deleteDialog.show()
+    }
+
+    fun showGenericDeleteAllDialog(context: Context, accepted: () -> Unit){
+        val deleteDialog = MaterialAlertDialogBuilder(context)
+        deleteDialog.setTitle(context.getString(R.string.you_are_going_to_delete_multiple_items))
+        deleteDialog.setNegativeButton(context.getString(R.string.cancel)) { dialogInterface: DialogInterface, _: Int -> dialogInterface.cancel() }
+        deleteDialog.setPositiveButton(context.getString(R.string.ok)) { _: DialogInterface?, _: Int ->
+            accepted()
+        }
+        deleteDialog.show()
+    }
+
     fun showRemoveHistoryItemDialog(item: HistoryItem, context: Activity, delete: (item: HistoryItem, deleteFile: Boolean) -> Unit){
         val deleteFile = booleanArrayOf(false)
         val deleteDialog = MaterialAlertDialogBuilder(context)
@@ -1651,7 +2215,7 @@ object UiUtil {
     }
 
     @SuppressLint("RestrictedApi")
-    fun showFilenameTemplateDialog(context: Activity, currentFilename: String, dialogTitle: String = context.getString(R.string.file_name_template), filenameSelected: (f: String) -> Unit){
+    fun showFilenameTemplateDialog(context: Activity, currentFilename: String, dialogTitle: String = context.getString(R.string.file_name_template), ytdlpViewModel: YTDLPViewModel? = null, itemContext: DownloadItem? = null, filenameSelected: (f: String) -> Unit){
         val builder = MaterialAlertDialogBuilder(context)
         builder.setTitle(dialogTitle)
         val view = context.layoutInflater.inflate(R.layout.filename_template_dialog, null)
@@ -1688,7 +2252,13 @@ object UiUtil {
 
 
         val preferences = PreferenceManager.getDefaultSharedPreferences(context)
-        val myTemplates = preferences.getStringSet("filename_templates", setOf())!!.toMutableSet()
+
+        val filenameTemplatePresets = setOf(
+            "%(uploader).30B - %(title).170B"
+        )
+
+        val myTemplates = preferences.getStringSet("filename_templates", filenameTemplatePresets)!!.toMutableSet()
+        myTemplates.addAll(filenameTemplatePresets)
         val myTemplatesView = view.findViewById<View>(R.id.mytemplates)
         val myTemplatesChipGroup = view.findViewById<ChipGroup>(R.id.filename_personal_chipgroup)
 
@@ -1722,6 +2292,46 @@ object UiUtil {
             myTemplatesView.isVisible = true
         }
 
+        view.findViewById<MaterialCardView>(R.id.filename_template_preview).isVisible = itemContext != null
+        val previewTemplateBtn = view.findViewById<MaterialButton>(R.id.filename_template_preview_btn)
+        val previewTemplateLoading = view.findViewById<ProgressBar>(R.id.filename_template_preview_loading)
+        val previewTemplateText = view.findViewById<TextView>(R.id.filename_template_preview_text)
+
+        var previewJob: Job? = null;
+
+        previewTemplateBtn.setOnClickListener {
+            previewTemplateLoading.isVisible = true
+            previewTemplateBtn.isVisible = false
+
+            previewJob = CoroutineScope(Dispatchers.IO).launch {
+                val preview = ytdlpViewModel!!.getFilenameTemplatePreview(itemContext!!, editText.text.toString())
+                if (isActive) {
+                    withContext(Dispatchers.Main) {
+                        previewTemplateLoading.isVisible = false
+                        previewTemplateText.isVisible = true
+                        previewTemplateText.text = preview
+                    }
+                }
+            }
+        }
+
+        editText.addTextChangedListener(object : TextWatcher {
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                previewTemplateText.isVisible = false
+                previewTemplateLoading.isVisible = false
+                previewTemplateBtn.isVisible = true
+                previewJob?.cancel(CancellationException())
+            }
+
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun afterTextChanged(s: Editable?) {}
+        })
+
+        if (currentFilename.isNotBlank() && itemContext != null) {
+            previewTemplateBtn.isVisible = true
+            previewTemplateBtn.performClick()
+        }
+
         CoroutineScope(Dispatchers.IO).launch {
             //handle personal template chips
             val mychips = mutableListOf<Chip>()
@@ -1737,11 +2347,13 @@ object UiUtil {
                         }
                     },
                     onLongClick = { c ->
-                        showGenericDeleteDialog(context, c.text.toString()) {
-                            myTemplates.remove(c.text.toString())
-                            myTemplatesView.isVisible = myTemplates.isNotEmpty()
-                            myTemplatesChipGroup.removeView(c)
-                            preferences.edit().putStringSet("filename_templates", myTemplates).apply()
+                        if (!filenameTemplatePresets.contains(c.text.toString())) {
+                            showGenericDeleteDialog(context, c.text.toString()) {
+                                myTemplates.remove(c.text.toString())
+                                myTemplatesView.isVisible = myTemplates.isNotEmpty()
+                                myTemplatesChipGroup.removeView(c)
+                                preferences.edit().putStringSet("filename_templates", myTemplates).apply()
+                            }
                         }
                     }
                 )
@@ -1767,7 +2379,6 @@ object UiUtil {
 
                 chips.add(tmp)
             }
-
 
             withContext(Dispatchers.Main){
                 if (mychips.isNotEmpty()){
@@ -1806,6 +2417,85 @@ object UiUtil {
         dialog.getButton(AlertDialog.BUTTON_NEUTRAL).gravity = Gravity.START
     }
 
+    fun showSelectRangeDialog(context: Activity, itemCount: Int, rangeSelected: (rangeSelected: Pair<Int, Int>) -> Unit) {
+        val builder = MaterialAlertDialogBuilder(context)
+        builder.setTitle(context.getString(R.string.select_between))
+        builder.setMessage(context.getString(R.string.select_between_desc))
+        builder.setIcon(R.drawable.baseline_format_list_numbered_24)
+        val view = context.layoutInflater.inflate(R.layout.select_range_dialog, null)
+
+        val fromTextInput = view.findViewById<TextInputLayout>(R.id.from_textinput)
+        fromTextInput.editText!!.keyListener = DigitsKeyListener.getInstance("0123456789")
+        val toTextInput = view.findViewById<TextInputLayout>(R.id.to_textinput)
+        toTextInput.editText!!.keyListener = DigitsKeyListener.getInstance("0123456789")
+
+
+        builder.setView(view)
+        builder.setPositiveButton(
+            context.getString(R.string.ok)
+        ) { _: DialogInterface?, _: Int ->
+            val firstIndex = fromTextInput.editText!!.text.toString().toInt() - 1
+            val secondIndex = toTextInput.editText!!.text.toString().toInt() - 1
+
+            rangeSelected(Pair(firstIndex,secondIndex))
+        }
+
+        // handle the negative button of the alert dialog
+        builder.setNegativeButton(
+            context.getString(R.string.cancel)
+        ) { _: DialogInterface?, _: Int -> }
+
+        val dialog = builder.create()
+        dialog.show()
+
+
+        fun checkRanges(start: String, end: String) : Boolean {
+            val res: Boolean
+
+            fromTextInput.error = ""
+            toTextInput.error = ""
+
+            if (start.isBlank() || end.isBlank()){
+                res = false
+            }else{
+                val startValid = kotlin.runCatching {
+                    start.toInt() > 0
+                }.getOrElse { false }
+
+                val endValid = kotlin.runCatching {
+                    end.toInt() <= itemCount
+                }.getOrElse { false }
+
+                if (!startValid) {
+                    fromTextInput.error = "Invalid Number"
+                }
+                if (!endValid) {
+                    toTextInput.error = "Invalid Number"
+                }
+
+                res = startValid && endValid
+            }
+
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = res
+            return res
+        }
+
+        fromTextInput.editText!!.doOnTextChanged { text, _, _, _ ->
+            val start = text.toString()
+            val end = toTextInput.editText!!.text.toString()
+            checkRanges(start, end)
+        }
+
+        toTextInput.editText!!.doOnTextChanged { text, _, _, _ ->
+            val start = fromTextInput.editText!!.text.toString()
+            val end = text.toString()
+            checkRanges(start, end)
+        }
+
+        fromTextInput.editText!!.setText("1")
+        toTextInput.editText!!.setText(itemCount.toString())
+    }
+
     private fun createPersonalFilenameTemplateChip(context: Activity, text: String, myChipGroup: ChipGroup, onClick: (f: Chip) -> Unit, onLongClick: (f: Chip) -> Unit) : Chip {
         val tmp = context.layoutInflater.inflate(R.layout.filter_chip, myChipGroup, false) as Chip
         tmp.text = text
@@ -1826,82 +2516,7 @@ object UiUtil {
 
     }
 
-    fun showPipedInstancesDialog(context: Activity, currentInstance: String, instanceSelected: (f: String) -> Unit){
-        val builder = MaterialAlertDialogBuilder(context)
-        builder.setTitle(context.getString(R.string.piped_instance))
-        val view = context.layoutInflater.inflate(R.layout.filename_template_dialog, null)
-        val editText = view.findViewById<EditText>(R.id.filename_edittext)
-        view.findViewById<TextInputLayout>(R.id.filename).apply {
-            hint = context.getString(R.string.piped_instance)
-            endIconMode = END_ICON_NONE
-        }
-        editText.setText(currentInstance)
-        editText.setSelection(editText.text.length)
-        builder.setView(view)
-        builder.setPositiveButton(
-            context.getString(R.string.ok)
-        ) { _: DialogInterface?, _: Int ->
-            instanceSelected(editText.text.toString())
-        }
-
-        // handle the negative button of the alert dialog
-        builder.setNegativeButton(
-            context.getString(R.string.cancel)
-        ) { _: DialogInterface?, _: Int -> }
-
-        builder.setNeutralButton("?")  { _: DialogInterface?, _: Int ->
-            val browserIntent =
-                Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/TeamPiped/Piped/wiki/Instances"))
-            context.startActivity(browserIntent)
-        }
-
-        view.findViewById<View>(R.id.suggested).visibility = View.GONE
-
-        val dialog = builder.create()
-        dialog.show()
-        val imm = context.getSystemService(AppCompatActivity.INPUT_METHOD_SERVICE) as InputMethodManager
-        editText!!.postDelayed({
-            editText.requestFocus()
-            imm.showSoftInput(editText, 0)
-        }, 300)
-
-        //handle suggestion chips
-        CoroutineScope(Dispatchers.IO).launch {
-            val chipGroup = view.findViewById<ChipGroup>(R.id.filename_suggested_chipgroup)
-            val chips = mutableListOf<Chip>()
-            val instances = PipedApiUtil(context).getPipedInstances().ifEmpty { return@launch }
-            instances.forEach { s ->
-                val tmp = context.layoutInflater.inflate(R.layout.filter_chip, chipGroup, false) as Chip
-                tmp.text = s
-
-                tmp.setOnClickListener {
-                    val c = it as Chip
-                    c.toggle()
-                    editText.setText(c.text.toString())
-                    editText.setSelection(c.text.length)
-                }
-
-                chips.add(tmp)
-            }
-            withContext(Dispatchers.Main){
-                view.findViewById<View>(R.id.suggested).visibility = View.VISIBLE
-                chips.forEach {
-                    it.isChecked = editText.text == it.text
-                    chipGroup!!.addView(it)
-                }
-
-                editText.doOnTextChanged { text, start, before, count ->
-                    chips.forEach {
-                        it.isChecked = editText.text == it.text
-                    }
-                }
-            }
-        }
-
-        dialog.getButton(AlertDialog.BUTTON_NEUTRAL).gravity = Gravity.START
-    }
-
-    private fun showGeneratedCommand(context: Activity, command: String){
+    private fun showGeneratedCommand(context: Activity, preferences: SharedPreferences, command: String) {
         val builder = MaterialAlertDialogBuilder(context)
         builder.setTitle(context.getString(R.string.command))
         val view = context.layoutInflater.inflate(R.layout.command_dialog, null)
@@ -2024,5 +2639,670 @@ object UiUtil {
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
         )
+    }
+
+    private fun showAddEditCustomYTDLPSource(context: Activity, title: String = "", repo: String = "", created: (title: String, repo: String) -> Unit) {
+        val builder = MaterialAlertDialogBuilder(context)
+        builder.setTitle(context.getString(R.string.new_source))
+        val view = context.layoutInflater.inflate(R.layout.create_ytdlp_sources, null)
+        val titleTextInput = view.findViewById<TextInputLayout>(R.id.title_textinput).editText!!
+        val repoTextInput = view.findViewById<TextInputLayout>(R.id.repo_textinput).editText!!
+        titleTextInput.setText(title)
+        repoTextInput.setText(repo)
+        builder.setView(view)
+        builder.setPositiveButton(context.getString(R.string.add)) { _: DialogInterface?, _: Int ->
+            val t = titleTextInput.text.toString()
+            val r = repoTextInput.text.toString()
+            created(t, r)
+        }
+
+        // handle the negative button of the alert dialog
+        builder.setNegativeButton(
+            context.getString(R.string.cancel)
+        ) { _: DialogInterface?, _: Int -> }
+
+        val dialog = builder.create()
+        dialog.show()
+
+        val createBtn = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+        createBtn.isEnabled = titleTextInput.text.toString().isNotBlank() && repoTextInput.text.toString().isNotBlank()
+        titleTextInput.doAfterTextChanged {
+            createBtn.isEnabled = titleTextInput.text.toString().isNotBlank() && repoTextInput.text.toString().isNotBlank()
+        }
+
+        repoTextInput.doAfterTextChanged {
+            createBtn.isEnabled = titleTextInput.text.toString().isNotBlank() && repoTextInput.text.toString().isNotBlank()
+        }
+
+        val imm = context.getSystemService(AppCompatActivity.INPUT_METHOD_SERVICE) as InputMethodManager
+        repoTextInput.postDelayed({
+            repoTextInput.requestFocus()
+            imm.showSoftInput(repoTextInput, 0)
+        }, 300)
+    }
+
+    fun showYTDLSourceBottomSheet(context: Activity, preferences: SharedPreferences, selectedSource: (title: String, repo: String) -> Unit) {
+        val bottomSheet = BottomSheetDialog(context)
+        bottomSheet.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        bottomSheet.setContentView(R.layout.ytdlp_sources_list)
+
+        val list = kotlin.runCatching {
+            preferences.getStringSet("custom_ytdlp_sources", emptySet())!!.toMutableList()
+        }.getOrDefault(mutableListOf<String>())
+
+        val parentView = bottomSheet.findViewById<LinearLayout>(R.id.sourcesList)!!
+
+        bottomSheet.findViewById<View>(R.id.add)?.apply {
+            setOnClickListener {
+                showAddEditCustomYTDLPSource(context) { title, repo ->
+                    list.add("${title}___${repo}")
+                    preferences.edit().putStringSet("custom_ytdlp_sources", list.toSet()).apply()
+                    bottomSheet.dismiss()
+                    selectedSource(title, repo)
+                }
+            }
+        }
+
+        val defaultSourceTitles = context.getStringArray(R.array.ytdlp_source)
+        val defaultSourceValues = context.getStringArray(R.array.ytdlp_source_values)
+        val tmp = list.toMutableList()
+        tmp.addAll(0, defaultSourceTitles.mapIndexed { index, s -> "${s}___${defaultSourceValues[index]}" })
+        tmp.forEach { s ->
+            val arr = s.split("___")
+            if (arr.size < 2) return@forEach
+
+            val title = arr[0]
+            val source = arr[1]
+            val isEditable = !defaultSourceValues.contains(source)
+            val child = LayoutInflater.from(context).inflate(R.layout.custom_ytdlp_source, null)
+            child.findViewById<MaterialCardView>(R.id.sampleCustomSource).setOnClickListener {
+                bottomSheet.dismiss()
+                selectedSource(title, source)
+            }
+
+            child.findViewById<TextView>(R.id.sampleTitle).apply {
+                text = title
+            }
+            child.findViewById<RadioButton>(R.id.sampleRadioBtn).apply {
+                isChecked = preferences.getString("ytdlp_source", "stable") == source
+                setOnClickListener {
+                    bottomSheet.dismiss()
+                    selectedSource(title, source)
+                }
+            }
+            child.findViewById<TextView>(R.id.sampleRepo).text = source
+            child.findViewById<View>(R.id.options).apply {
+                isVisible = isEditable
+                setOnClickListener {
+                    val popup = PopupMenu(context, it)
+                    popup.menuInflater.inflate(R.menu.custom_ytdlp_source_menu, popup.menu)
+                    popup.setOnMenuItemClickListener { m ->
+                        when (m.itemId) {
+                            R.id.edit -> {
+                                popup.dismiss()
+                                showAddEditCustomYTDLPSource(context, title, source) { nt, nr ->
+                                    child.findViewById<TextView>(R.id.sampleTitle).text = nt
+                                    child.findViewById<TextView>(R.id.sampleRepo).text = nr
+                                    val index = list.indexOf(s)
+                                    list[index] = "${nt}___${nr}"
+                                    preferences.edit().putStringSet("custom_ytdlp_sources", list.toSet()).apply()
+                                    if (child.findViewById<RadioButton>(R.id.sampleRadioBtn).isChecked) {
+                                        selectedSource(nt, nr)
+                                    }
+                                }
+                            }
+
+                            R.id.remove -> {
+                                popup.dismiss()
+                                showGenericDeleteDialog(context, title) {
+                                    list.remove(s)
+                                    preferences.edit()
+                                        .putStringSet("custom_ytdlp_sources", list.toSet()).apply()
+                                    if (child.findViewById<RadioButton>(R.id.sampleRadioBtn).isChecked) {
+                                        parentView.children.first().performClick()
+                                    }
+                                    parentView.removeView(child)
+                                }
+                            }
+                        }
+                        true
+                    }
+                    popup.show()
+                }
+            }
+
+            parentView.addView(child)
+        }
+
+        bottomSheet.show()
+        bottomSheet.behavior.state = BottomSheetBehavior.STATE_EXPANDED
+        bottomSheet.window!!.setLayout(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        )
+    }
+
+    fun showNewAppUpdateSnackBar(
+        v: GithubRelease,
+        context: Activity,
+        container: LinearLayout,
+        frameLayout: View,
+        anchorView: View?,
+        layoutInflater: LayoutInflater,
+        updateUtil: UpdateUtil,
+        lifecycleOwner: LifecycleOwner,
+        preferences: SharedPreferences,
+        installLauncher: ActivityResultLauncher<Intent>
+    ) {
+        val customView = layoutInflater.inflate(R.layout.layout_update_snackbar, null)
+        customView.findViewById<TextView>(R.id.newVersionTitle).text = context.getString(R.string.version_ready_to_download, v.tag_name)
+        val triggerAction = View.OnClickListener {
+            container.removeView(customView)
+            showNewAppUpdateDialog(v, context, updateUtil, lifecycleOwner, preferences, installLauncher)
+        }
+
+        customView.setOnClickListener(triggerAction)
+        customView.findViewById<View>(R.id.btn_close_update).setOnClickListener {
+            container.removeView(customView)
+        }
+
+        container.addView(customView)
+    }
+
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
+    fun showNewAppUpdateDialog(
+        v: GithubRelease,
+        context: Activity,
+        updateUtil: UpdateUtil,
+        lifecycleOwner: LifecycleOwner,
+        preferences: SharedPreferences,
+        installLauncher: ActivityResultLauncher<Intent>
+    ) {
+        if (context.isFinishing || context.isDestroyed) return
+        var positiveButton: Button? = null
+        var negativeButton: Button? = null
+        var neutralButton: Button? = null
+        var tmpDownloadJob: Job? = null
+
+        val skippedVersions = preferences.getString("skip_updates", "")?.split(",")?.distinct()?.toMutableList() ?: mutableListOf()
+
+        val updateDialog = MaterialAlertDialogBuilder(context)
+            .setTitle(v.tag_name)
+            .setMessage(v.body)
+            .setCancelable(false)
+            .setIcon(R.drawable.ic_update_app)
+            .setNeutralButton(R.string.ignore){ d: DialogInterface?, _:Int ->
+                tmpDownloadJob?.cancel()
+                skippedVersions.add(v.tag_name)
+                preferences.edit().putString("skip_updates", skippedVersions.joinToString(",")).apply()
+                d?.dismiss()
+            }
+            .setNegativeButton(R.string.cancel) { _: DialogInterface?, _: Int ->
+                tmpDownloadJob?.cancel()
+            }
+            .setPositiveButton(R.string.update, null)
+        val view = updateDialog.show()
+        val textView = view.findViewById<TextView>(android.R.id.message)
+        textView!!.movementMethod = LinkMovementMethod.getInstance()
+        val mw = Markwon.builder(context).usePlugin(object: AbstractMarkwonPlugin() {
+
+            override fun configureConfiguration(builder: MarkwonConfiguration.Builder) {
+                builder.linkResolver { view, link ->
+                    val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(link))
+                    context.startActivity(browserIntent)
+                }
+            }
+        }).build()
+        mw.setMarkdown(textView, v.body)
+
+        positiveButton = view.getButton(android.app.AlertDialog.BUTTON_POSITIVE)
+        negativeButton = view.getButton(android.app.AlertDialog.BUTTON_NEGATIVE)
+        neutralButton = view.getButton(android.app.AlertDialog.BUTTON_NEUTRAL)
+
+        positiveButton?.setOnClickListener {
+            positiveButton.isEnabled = false
+            positiveButton.text = "0%"
+
+            val lifecycleScope = lifecycleOwner.lifecycleScope
+
+            tmpDownloadJob = lifecycleScope.launch {
+                val fileResp = updateUtil.downloadReleaseApk(v) { progress ->
+                    lifecycleScope.launch {
+                        withContext(Dispatchers.Main) {
+                            positiveButton.text = "$progress%"
+                        }
+                    }
+                }
+
+                fileResp.onFailure {
+                    lifecycleScope.launch {
+                        withContext(Dispatchers.Main) {
+                            view.dismiss()
+                            Snackbar.make(
+                                context.findViewById(R.id.frame_layout),
+                                it.message ?: context.getString(R.string.errored),
+                                Snackbar.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+                }
+
+                fileResp.onSuccess { file ->
+                    lifecycleScope.launch {
+                        withContext(Dispatchers.Main) {
+                            positiveButton.text = context.getString(R.string.please_wait)
+                            negativeButton.isEnabled = false
+                            neutralButton.isEnabled = false
+
+                            ApkInstallUtil.installApk(context, file, installLauncher) { result ->
+                                result.onSuccess {
+                                }.onFailure { f ->
+                                    Snackbar.make(context.findViewById(R.id.frame_layout), f.message ?: "", Snackbar.LENGTH_LONG).show()
+                                }
+                                view.dismiss()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun showNewPackageUpdateSnackBar(
+        v: PackageBase.PackageRelease,
+        packageItem: PackageItem,
+        context: Activity,
+        container: LinearLayout,
+        frameLayout: View,
+        anchorView: View?,
+        layoutInflater: LayoutInflater,
+        lifecycleOwner: LifecycleOwner,
+        installLauncher: ActivityResultLauncher<Intent>,
+        onResult: (result: Result<Unit>) -> Unit
+    ) {
+        val customView = layoutInflater.inflate(R.layout.layout_package_update_snackbar, null)
+        val triggerAction = View.OnClickListener {
+            container.removeView(customView)
+            showNewReleaseUpdateDialog(v, packageItem, context, lifecycleOwner, frameLayout, anchorView, installLauncher, onResult)
+        }
+
+        customView.setOnClickListener(triggerAction)
+        customView.findViewById<View>(R.id.btn_close_update).setOnClickListener {
+            container.removeView(customView)
+        }
+        customView.findViewById<TextView>(R.id.newVersionTitle).text = context.getString(R.string.package_version_ready_to_download, packageItem.title, v.tag_name)
+
+        container.addView(customView)
+    }
+
+    fun showNewReleaseUpdateDialog(
+        item: PackageBase.PackageRelease,
+        packageItem: PackageItem,
+        context: Activity,
+        lifecycleOwner: LifecycleOwner,
+        activityView: View,
+        snackbarAnchorView: View?,
+        installLauncher: ActivityResultLauncher<Intent>,
+        onResult: (result: Result<Unit>) -> Unit
+    ) {
+        var tmpDownloadJob : Job? = null
+
+        var positiveButton: Button? = null
+        var negativeButton: Button? = null
+
+        val updateDialog = MaterialAlertDialogBuilder(context)
+            .setTitle("${item.tag_name} (${FileUtil.convertFileSize(item.downloadSize)})")
+            .setMessage(item.body)
+            .setIcon(R.drawable.ic_update_app)
+            .setCancelable(false)
+            .setNegativeButton(context.getString(R.string.cancel)) { _: DialogInterface?, _: Int ->
+                tmpDownloadJob?.cancel()
+            }
+            .setPositiveButton(context.getString(R.string.download), null)
+        val view = updateDialog.show()
+        val textView = view.findViewById<TextView>(android.R.id.message)
+        textView!!.movementMethod = LinkMovementMethod.getInstance()
+        val mw = Markwon.builder(context).usePlugin(object: AbstractMarkwonPlugin() {
+
+            override fun configureConfiguration(builder: MarkwonConfiguration.Builder) {
+                builder.linkResolver { view, link ->
+                    val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(link))
+                    context.startActivity(browserIntent)
+                }
+            }
+        }).build()
+        mw.setMarkdown(textView, item.body)
+
+        val lifecycleScope = lifecycleOwner.lifecycleScope
+
+        positiveButton = view.getButton(android.app.AlertDialog.BUTTON_POSITIVE)
+        negativeButton = view.getButton(android.app.AlertDialog.BUTTON_NEGATIVE)
+
+        positiveButton?.setOnClickListener {
+            positiveButton.isEnabled = false
+            positiveButton.text = "0%"
+
+            tmpDownloadJob = lifecycleScope.launch {
+                val instance = packageItem.getInstance()
+                val fileResp = instance.downloadReleaseApk(item) { progress ->
+                    lifecycleScope.launch {
+                        withContext(Dispatchers.Main) {
+                            positiveButton.text = "$progress%"
+                        }
+                    }
+                }
+
+                fileResp.onFailure {
+                    lifecycleScope.launch {
+                        withContext(Dispatchers.Main) {
+                            view.dismiss()
+                            val snackbar = Snackbar.make(activityView, it.message ?: context.getString(R.string.errored), Snackbar.LENGTH_LONG)
+                            snackbar.anchorView = snackbarAnchorView
+                            snackbar.show()
+                        }
+                    }
+                }
+
+                fileResp.onSuccess { file ->
+                    lifecycleScope.launch {
+                        withContext(Dispatchers.Main) {
+                            positiveButton.text = context.getString(R.string.please_wait)
+                            negativeButton.isEnabled = false
+
+                            ApkInstallUtil.installApk(context, file, installLauncher) { result ->
+                                onResult(result)
+                                view.dismiss()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+    fun showObserveSourceDetailsCard(
+        item: ObserveSourcesItem,
+        context: Activity,
+        onCheckNow: () -> Unit,
+        onPauseResume: () -> Unit,
+        onEdit: () -> Unit,
+        onDelete: () -> Unit,
+        onReScanFromScratch: () -> Unit,
+        onSkipBacklog: () -> Unit,
+        onUnskipIgnored: () -> Unit,
+    ) {
+        val bottomSheet = BottomSheetDialog(context)
+        bottomSheet.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        bottomSheet.setContentView(R.layout.observe_sources_details_bottom_sheet)
+
+        bottomSheet.findViewById<TextView>(R.id.bottom_sheet_title)?.text = item.name.ifEmpty { item.url }
+        bottomSheet.findViewById<TextView>(R.id.bottom_sheet_link)?.apply {
+            text = item.url
+            setOnClickListener { openLinkIntent(context, item.url) }
+            setOnLongClickListener { copyLinkToClipBoard(context, item.url); true }
+        }
+
+        // status chip
+        val status = bottomSheet.findViewById<Chip>(R.id.status_chip)
+        when (item.displayStatus()) {
+            Extensions.ObserveSourceDisplayStatus.ACTIVE -> {
+                val c = Calendar.getInstance().apply { timeInMillis = item.calculateNextTimeForObserving() }
+                val next = SimpleDateFormat(DateFormat.getBestDateTimePattern(Locale.getDefault(), "ddMMMyyyy - HHmm"), Locale.getDefault()).format(c.timeInMillis)
+                status?.text = "${item.scheduleSummary(context)} · $next"
+                status?.setChipIconResource(R.drawable.baseline_loop_24)
+            }
+            Extensions.ObserveSourceDisplayStatus.PAUSED -> {
+                status?.text = context.getString(R.string.paused)
+                status?.setChipIconResource(R.drawable.exomedia_ic_pause_white)
+            }
+            Extensions.ObserveSourceDisplayStatus.FINISHED -> {
+                status?.text = context.resources.getQuantityString(R.plurals.finished_runs, item.runCount, item.runCount)
+                status?.setChipIconResource(R.drawable.ic_check)
+            }
+        }
+
+        // stat chips (tap processed/skipped -> view the link list)
+        bottomSheet.findViewById<Chip>(R.id.runs_chip)?.text =
+            context.getString(R.string.observe_runs_chip, item.runCount)
+        bottomSheet.findViewById<Chip>(R.id.processed_chip)?.apply {
+            text = context.getString(R.string.observe_processed_chip, item.alreadyProcessedLinks.size)
+            isClickable = item.alreadyProcessedLinks.isNotEmpty()
+            setOnClickListener {
+                showFullTextDialog(context, item.alreadyProcessedLinks.joinToString("\n"), context.getString(R.string.observe_processed_chip, item.alreadyProcessedLinks.size))
+            }
+        }
+        bottomSheet.findViewById<Chip>(R.id.skipped_chip)?.apply {
+            text = context.getString(R.string.observe_skipped_chip, item.ignoredLinks.size)
+            isVisible = item.ignoredLinks.isNotEmpty()
+            setOnClickListener {
+                showFullTextDialog(context, item.ignoredLinks.joinToString("\n"), context.getString(R.string.observe_skipped_chip, item.ignoredLinks.size))
+            }
+        }
+
+        // check now (FAB)
+        bottomSheet.findViewById<FloatingActionButton>(R.id.check_now_fab)?.setOnClickListener {
+            onCheckNow(); bottomSheet.dismiss()
+        }
+
+        // pause / resume
+        bottomSheet.findViewById<FloatingActionButton>(R.id.pause_resume_fab)?.apply {
+            if (item.displayStatus() == Extensions.ObserveSourceDisplayStatus.ACTIVE) {
+                setImageResource(R.drawable.exomedia_ic_pause_white)
+            } else {
+                setImageResource(R.drawable.exomedia_ic_play_arrow_white)
+            }
+            setOnClickListener { onPauseResume(); bottomSheet.dismiss() }
+        }
+
+        bottomSheet.findViewById<Button>(R.id.edit_button)?.setOnClickListener { onEdit(); bottomSheet.dismiss() }
+        bottomSheet.findViewById<Button>(R.id.delete_button)?.setOnClickListener {
+            showGenericDeleteDialog(context, item.name) { onDelete(); bottomSheet.dismiss() }
+        }
+
+        bottomSheet.findViewById<Button>(R.id.settings_button)?.setOnClickListener {
+
+            val settingsSheet = BottomSheetDialog(context)
+            settingsSheet.requestWindowFeature(Window.FEATURE_NO_TITLE)
+            settingsSheet.setContentView(R.layout.observe_sources_settings_sheet)
+
+            // reset-state actions (all confirmed)
+            settingsSheet.findViewById<Button>(R.id.rescan_button)?.setOnClickListener {
+                showGenericConfirmDialog(context, context.getString(R.string.rescan_from_scratch), context.getString(R.string.rescan_from_scratch_desc)) {
+                    onReScanFromScratch(); settingsSheet.dismiss()
+                }
+            }
+            settingsSheet.findViewById<Button>(R.id.skip_backlog_button)?.setOnClickListener {
+                showGenericConfirmDialog(context, context.getString(R.string.skip_backlog), context.getString(R.string.skip_backlog_desc)) {
+                    onSkipBacklog(); settingsSheet.dismiss()
+                }
+            }
+            settingsSheet.findViewById<Button>(R.id.unskip_button)?.apply {
+                isVisible = item.ignoredLinks.isNotEmpty()
+                setOnClickListener {
+                    showGenericConfirmDialog(context, context.getString(R.string.unskip_ignored), context.getString(R.string.unskip_ignored_desc)) {
+                        onUnskipIgnored(); settingsSheet.dismiss()
+                    }
+                }
+            }
+
+
+            val displayMetrics = DisplayMetrics()
+            context.windowManager.defaultDisplay.getMetrics(displayMetrics)
+            settingsSheet.behavior.peekHeight = displayMetrics.heightPixels
+            settingsSheet.show()
+
+        }
+
+        bottomSheet.show()
+        val displayMetrics = DisplayMetrics()
+        context.windowManager.defaultDisplay.getMetrics(displayMetrics)
+        bottomSheet.behavior.peekHeight = displayMetrics.heightPixels
+        bottomSheet.window!!.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+    }
+
+    fun showDownloadDelayDialog(context: Activity, sharedPreferences: SharedPreferences, rangeSelected: (rangeSelected: Pair<Float, Float>) -> Unit, resetSelected: () -> Unit) {
+        val builder = MaterialAlertDialogBuilder(context)
+        builder.setTitle(context.getString(R.string.download_delay))
+        builder.setMessage(context.getString(R.string.download_delay_summary))
+        builder.setIcon(R.drawable.baseline_timer_24)
+        val view = context.layoutInflater.inflate(R.layout.download_delay_preference_dialog, null)
+
+        val downloadDelay = sharedPreferences.getString("download_delay", "0-0")!!
+        val minDelay = downloadDelay.split("-")[0]
+        val maxDelay = downloadDelay.split("-")[1]
+
+        val fromTextInput = view.findViewById<TextInputLayout>(R.id.from_textinput_layout)
+        fromTextInput.editText!!.keyListener = DigitsKeyListener.getInstance("0123456789.")
+
+        val toTextInput = view.findViewById<TextInputLayout>(R.id.to_textinput_layout)
+        toTextInput.editText!!.keyListener = DigitsKeyListener.getInstance("0123456789.")
+
+
+        builder.setView(view)
+        builder.setPositiveButton(
+            context.getString(R.string.ok)
+        ) { _: DialogInterface?, _: Int ->
+            val firstIndex = fromTextInput.editText!!.text.toString().toFloat()
+            val secondIndex = toTextInput.editText!!.text.toString().toFloat()
+
+            rangeSelected(Pair(firstIndex,secondIndex))
+        }
+
+        // handle the negative button of the alert dialog
+        builder.setNegativeButton(
+            context.getString(R.string.cancel)
+        ) { _: DialogInterface?, _: Int -> }
+
+        builder.setNeutralButton(
+            context.getString(R.string.reset)
+        ) { _: DialogInterface?, _: Int ->
+            resetSelected()
+        }
+
+        val dialog = builder.create()
+        dialog.show()
+
+
+        fun checkRanges(start: String, end: String) : Boolean {
+            val res: Boolean
+
+            fromTextInput.error = ""
+            toTextInput.error = ""
+
+            if (start.isBlank() || end.isBlank()){
+                res = false
+            }else{
+                val startValid = kotlin.runCatching {
+                    start.toFloat() >= 0f
+                }.getOrElse { false }
+
+                val endValid = kotlin.runCatching {
+                    end.toFloat() >= start.toFloat()
+                }.getOrElse { false }
+
+                if (!startValid) {
+                    fromTextInput.error = "Invalid Number"
+                }
+                if (!endValid) {
+                    toTextInput.error = "Invalid Number"
+                }
+
+                res = startValid && endValid
+            }
+
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = res
+            return res
+        }
+
+        fromTextInput.editText!!.doOnTextChanged { text, _, _, _ ->
+            val start = text.toString()
+            val end = toTextInput.editText!!.text.toString()
+            checkRanges(start, end)
+        }
+
+        toTextInput.editText!!.doOnTextChanged { text, _, _, _ ->
+            val start = fromTextInput.editText!!.text.toString()
+            val end = text.toString()
+            checkRanges(start, end)
+        }
+
+        fromTextInput.editText!!.setText(minDelay)
+        toTextInput.editText!!.setText(maxDelay)
+    }
+
+    fun showChooseInstallerAppDialog(context: Activity, appIdSelected: (appId: String) -> Unit) {
+        val builder = MaterialAlertDialogBuilder(context)
+        builder.setTitle(context.getString(R.string.choose_installer_app))
+        builder.setIcon(R.drawable.baseline_install_mobile_24)
+        val view = context.layoutInflater.inflate(R.layout.choose_installer_app_dialog, null)
+
+        data class ExternalInstallerApp(
+            val appName: String,
+            val packageName: String,
+            val icon: Drawable
+        )
+
+        lateinit var alertDialog: AlertDialog
+
+        val installersList = mutableListOf<ExternalInstallerApp>()
+        val packageManager = context.packageManager
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(Uri.parse("content://dummy"), "application/vnd.android.package-archive")
+        }
+
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_ALL.toLong())
+        } else {
+            0
+        }
+
+        val resolveInfoList = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packageManager.queryIntentActivities(intent, flags as PackageManager.ResolveInfoFlags)
+        } else {
+            @Suppress("DEPRECATION")
+            packageManager.queryIntentActivities(intent, PackageManager.MATCH_ALL)
+        }
+
+        for (resolveInfo in resolveInfoList) {
+            val activityInfo = resolveInfo.activityInfo ?: continue
+            val appPackageName = activityInfo.packageName
+
+            // Exclude your own app from the list of external options
+            if (appPackageName == context.packageName) continue
+
+            val appName = resolveInfo.loadLabel(packageManager).toString()
+            val appIcon = resolveInfo.loadIcon(packageManager)
+
+            installersList.add(
+                ExternalInstallerApp(
+                    appName = appName,
+                    packageName = appPackageName,
+                    icon = appIcon
+                )
+            )
+        }
+
+        val finalList = installersList.distinctBy { it.packageName }.sortedBy { it.appName }
+        if (finalList.isEmpty()) {
+            return
+        }
+
+        finalList.forEach { app ->
+            val card = context.layoutInflater.inflate(R.layout.installer_app_card, null)
+            card.findViewById<TextView>(R.id.app_name).text = app.appName
+            card.findViewById<ShapeableImageView>(R.id.app_icon).setImageDrawable(app.icon)
+
+            card.setOnClickListener {
+                appIdSelected(app.packageName)
+                alertDialog.dismiss()
+            }
+
+            (view as LinearLayout).addView(card)
+        }
+
+        builder.setView(view)
+        alertDialog = builder.create()
+        alertDialog.show()
     }
 }

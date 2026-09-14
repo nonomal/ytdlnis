@@ -4,7 +4,7 @@ import android.os.Parcelable
 import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
-import com.deniscerri.ytdl.database.viewmodel.DownloadViewModel
+import com.deniscerri.ytdl.database.enums.DownloadType
 import kotlinx.parcelize.Parcelize
 
 @Entity(tableName = "downloads")
@@ -17,7 +17,7 @@ data class DownloadItem(
     var author: String,
     var thumb: String,
     var duration: String,
-    var type: DownloadViewModel.Type,
+    var type: DownloadType,
     var format: Format,
     @ColumnInfo(defaultValue = "Default")
     var container: String,
@@ -44,5 +44,10 @@ data class DownloadItem(
     @ColumnInfo(defaultValue = "")
     var playlistIndex: Int? = null,
     @ColumnInfo(defaultValue = "0")
-    var incognito: Boolean = false
+    var incognito: Boolean = false,
+    @ColumnInfo(defaultValue = "[]")
+    var availableSubtitles: List<String> = listOf(),
+    var rowNumber: Int = 0,
+    @ColumnInfo(defaultValue = "0")
+    var queueOrder: Int = 0
 ) : Parcelable

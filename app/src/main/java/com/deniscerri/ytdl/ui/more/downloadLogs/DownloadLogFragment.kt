@@ -14,27 +14,33 @@ import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import androidx.core.content.edit
 import androidx.core.view.children
 import androidx.core.view.get
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.preference.PreferenceManager
 import com.deniscerri.ytdl.MainActivity
 import com.deniscerri.ytdl.R
 import com.deniscerri.ytdl.database.viewmodel.LogViewModel
 import com.deniscerri.ytdl.util.Extensions.enableFastScroll
-import com.deniscerri.ytdl.util.Extensions.enableTextHighlight
 import com.deniscerri.ytdl.util.Extensions.setCustomTextSize
+import com.deniscerri.ytdl.util.FileUtil
+import com.deniscerri.ytdl.util.WorkerEventBus
 import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.bottomappbar.BottomAppBar
 import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
+import com.google.android.material.progressindicator.LinearProgressIndicator
 import com.google.android.material.slider.Slider
 import com.google.android.material.snackbar.Snackbar
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -47,6 +53,7 @@ class DownloadLogFragment : Fragment() {
     private lateinit var mainActivity: MainActivity
     private lateinit var logViewModel: LogViewModel
     private lateinit var sharedPreferences: SharedPreferences
+    private var logID: Long? = null
 
     private var autoScroll : Boolean = true
     private var scrollDownBtn : MenuItem? = null
@@ -94,8 +101,8 @@ class DownloadLogFragment : Fragment() {
                 .show()
         }
 
-        val id = arguments?.getLong("logID")
-        if (id == null || id == 0L) {
+        logID = arguments?.getLong("logID")
+        if (logID == null || logID == 0L) {
             mainActivity.onBackPressedDispatcher.onBackPressed()
         }
 
@@ -103,15 +110,17 @@ class DownloadLogFragment : Fragment() {
         logViewModel = ViewModelProvider(this)[LogViewModel::class.java]
 
         CoroutineScope(Dispatchers.IO).launch {
-            val logItem = logViewModel.getItemById(id!!)
-            withContext(Dispatchers.Main){
-                topAppBar.title = logItem.title
+            runCatching {
+                val logItem = logViewModel.getItemById(logID!!) ?: throw Exception()
+                withContext(Dispatchers.Main){
+                    topAppBar.title = logItem.title
+                }
+            }.onFailure {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(requireContext(), "Log is deleted!", Toast.LENGTH_SHORT).show()
+                    mainActivity.onBackPressedDispatcher.onBackPressed()
+                }
             }
-        }
-
-        lifecycleScope.launch(Dispatchers.IO){
-            content.isFocusable = true
-            content.enableTextHighlight()
         }
 
         contentScrollView.enableFastScroll()
@@ -131,6 +140,7 @@ class DownloadLogFragment : Fragment() {
 //                        contentScrollView.setPadding(0,0,0,
 //                            (requireContext().resources.displayMetrics.density * 150).toInt()
 //                        )
+                        sharedPreferences.edit().putBoolean("wrap_text_log", true).apply()
                         updateAutoScrollState()
                     }else{
                         val parent = content.parent as ViewGroup
@@ -148,6 +158,7 @@ class DownloadLogFragment : Fragment() {
                         scrollView.id = R.id.horizontalscroll_output
                         parent.addView(scrollView, 0)
                         updateAutoScrollState()
+                        sharedPreferences.edit().putBoolean("wrap_text_log", false).apply()
                     }
                 }
 
@@ -159,6 +170,23 @@ class DownloadLogFragment : Fragment() {
 
                 R.id.text_size -> {
                     slider!!.isVisible = !slider.isVisible
+                }
+
+                R.id.export_file -> {
+                    logViewModel.exportToFile(logID!!) {f ->
+                        if (f == null){
+                            Snackbar.make(bottomAppBar, getString(R.string.couldnt_parse_file), Snackbar.LENGTH_LONG)
+                                .setAnchorView(bottomAppBar)
+                                .show()
+                        }else{
+                            val snack = Snackbar.make(bottomAppBar, getString(R.string.backup_created_successfully), Snackbar.LENGTH_LONG)
+                            snack.setAnchorView(bottomAppBar)
+                            snack.setAction(R.string.share) {
+                                FileUtil.shareFileIntent(requireContext(), listOf(f.absolutePath))
+                            }
+                            snack.show()
+                        }
+                    }
                 }
             }
             true
@@ -186,8 +214,13 @@ class DownloadLogFragment : Fragment() {
             false
         }
 
+        sharedPreferences.getBoolean("wrap_text_log", false).apply {
+            if (this){
+                bottomAppBar.menu.performIdentifierAction(R.id.wrap, 0)
+            }
+        }
 
-        logViewModel.getLogFlowByID(id!!).observe(viewLifecycleOwner){logItem ->
+        logViewModel.getLogFlowByID(logID!!).observe(viewLifecycleOwner){logItem ->
             kotlin.runCatching {
                 requireActivity().runOnUiThread{
                     if (logItem != null){
@@ -205,14 +238,23 @@ class DownloadLogFragment : Fragment() {
                 }
             }
         }
+
+
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                WorkerEventBus.events.collectLatest { event ->
+                    val progressBar = requireView().findViewById<LinearProgressIndicator>(R.id.progress)
+                    if (event.logItemID == logID) {
+                        progressBar.isVisible = event.progress < 100
+                        progressBar.setProgressCompat(event.progress, true)
+                    }
+                }
+            }
+        }
     }
 
     private fun updateAutoScrollState() {
         val canVerticallyScroll = contentScrollView.canScrollVertically(1)
         scrollDownBtn?.isVisible = canVerticallyScroll
-    }
-
-    companion object {
-        private const val TAG = "DownloadLogActivity"
     }
 }

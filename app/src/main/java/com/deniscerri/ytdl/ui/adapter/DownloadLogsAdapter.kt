@@ -12,8 +12,8 @@ import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.deniscerri.ytdl.R
+import com.deniscerri.ytdl.database.enums.DownloadType
 import com.deniscerri.ytdl.database.models.LogItem
-import com.deniscerri.ytdl.database.viewmodel.DownloadViewModel
 import com.deniscerri.ytdl.util.Extensions.popup
 import com.deniscerri.ytdl.util.FileUtil
 import com.google.android.material.button.MaterialButton
@@ -63,15 +63,15 @@ class DownloadLogsAdapter(onItemClickListener: OnItemClickListener, activity: Ac
 
         val downloadTypeIcon = card.findViewById<MaterialButton>(R.id.download_type)
         when(item.downloadType){
-            DownloadViewModel.Type.audio -> {
+            DownloadType.audio -> {
                 downloadTypeIcon.setIconResource(R.drawable.ic_music)
                 downloadTypeIcon.contentDescription = activity.getString(R.string.audio)
             }
-            DownloadViewModel.Type.video -> {
+            DownloadType.video -> {
                 downloadTypeIcon.setIconResource(R.drawable.ic_video)
                 downloadTypeIcon.contentDescription = activity.getString(R.string.video)
             }
-            DownloadViewModel.Type.command -> {
+            DownloadType.command -> {
                 downloadTypeIcon.setIconResource(R.drawable.ic_terminal)
                 downloadTypeIcon.contentDescription = activity.getString(R.string.command)
             }
@@ -81,7 +81,10 @@ class DownloadLogsAdapter(onItemClickListener: OnItemClickListener, activity: Ac
         val formatNote = card.findViewById<TextView>(R.id.format_note)
         if (item.format.format_note == "?" || item.format.format_note == "") formatNote!!.visibility =
             View.GONE
-        else formatNote!!.text = item.format.format_note.uppercase()
+        else {
+            formatNote!!.text = item.format.format_note.uppercase()
+            formatNote!!.visibility = View.VISIBLE
+        }
 
         val codec = card.findViewById<TextView>(R.id.codec)
         val codecText =

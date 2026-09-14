@@ -10,6 +10,7 @@
         android:layout_height="wrap_content"
         android:scrollbars="none"
         android:clipToPadding="false"
+        android:paddingBottom="100dp"
         app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"/>
 
     <com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
@@ -17,9 +18,9 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|end"
-        android:text="@string/pause"
+        android:text="@string/pause_all"
         android:layout_margin="16dp"
-        android:contentDescription="@string/pause"
+        android:contentDescription="@string/pause_all"
         app:icon="@drawable/exomedia_ic_pause_white"
         app:useCompatPadding="true" />
 
@@ -29,9 +30,9 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|end"
-        android:text="@string/resume"
+        android:text="@string/resume_all"
         android:layout_margin="16dp"
-        android:contentDescription="@string/resume"
+        android:contentDescription="@string/resume_all"
         app:icon="@drawable/exomedia_ic_play_arrow_white"
         app:useCompatPadding="true" />
 

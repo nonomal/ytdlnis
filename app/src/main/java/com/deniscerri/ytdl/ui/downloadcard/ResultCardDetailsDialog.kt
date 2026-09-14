@@ -12,18 +12,20 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.Environment
 import android.util.DisplayMetrics
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.view.Window
 import android.widget.Button
+import android.widget.ProgressBar
 import android.widget.TextView
-import androidx.core.net.toUri
 import androidx.core.os.bundleOf
+import androidx.core.view.isVisible
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
@@ -37,18 +39,21 @@ import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.RecyclerView
 import androidx.work.WorkManager
 import com.deniscerri.ytdl.R
+import com.deniscerri.ytdl.database.enums.DownloadType
 import com.deniscerri.ytdl.database.models.DownloadItem
 import com.deniscerri.ytdl.database.models.ResultItem
 import com.deniscerri.ytdl.database.repository.DownloadRepository
+import com.deniscerri.ytdl.database.viewmodel.DownloadCardViewModel
 import com.deniscerri.ytdl.database.viewmodel.DownloadViewModel
 import com.deniscerri.ytdl.database.viewmodel.ResultViewModel
+import com.deniscerri.ytdl.database.viewmodel.YTDLPViewModel
 import com.deniscerri.ytdl.ui.adapter.ActiveDownloadMinifiedAdapter
 import com.deniscerri.ytdl.ui.adapter.GenericDownloadAdapter
 import com.deniscerri.ytdl.util.Extensions.setFullScreen
 import com.deniscerri.ytdl.util.NotificationUtil
 import com.deniscerri.ytdl.util.UiUtil
 import com.deniscerri.ytdl.util.VideoPlayerUtil
-import com.deniscerri.ytdl.work.DownloadWorker
+import com.deniscerri.ytdl.util.WorkerEventBus
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
@@ -58,7 +63,6 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.elevation.SurfaceColors
 import com.google.android.material.progressindicator.LinearProgressIndicator
 import com.google.android.material.snackbar.Snackbar
-import com.yausername.youtubedl_android.YoutubeDL
 import it.xabaras.android.recyclerview.swipedecorator.RecyclerViewSwipeDecorator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -67,9 +71,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
-import org.greenrobot.eventbus.EventBus
-import org.greenrobot.eventbus.Subscribe
-import org.greenrobot.eventbus.ThreadMode
 
 
 class ResultCardDetailsDialog : BottomSheetDialogFragment(), GenericDownloadAdapter.OnItemClickListener, ActiveDownloadMinifiedAdapter.OnItemClickListener {
@@ -77,6 +78,8 @@ class ResultCardDetailsDialog : BottomSheetDialogFragment(), GenericDownloadAdap
     private lateinit var videoView: PlayerView
     private lateinit var downloadViewModel: DownloadViewModel
     private lateinit var resultViewModel: ResultViewModel
+    private lateinit var ytdlpViewModel: YTDLPViewModel
+    private lateinit var downloadCardViewModel: DownloadCardViewModel
 
     private lateinit var activeAdapter: ActiveDownloadMinifiedAdapter
     private lateinit var queuedAdapter: GenericDownloadAdapter
@@ -92,6 +95,8 @@ class ResultCardDetailsDialog : BottomSheetDialogFragment(), GenericDownloadAdap
         notificationUtil = NotificationUtil(requireActivity())
         downloadViewModel = ViewModelProvider(this)[DownloadViewModel::class.java]
         resultViewModel = ViewModelProvider(this)[ResultViewModel::class.java]
+        ytdlpViewModel = ViewModelProvider(this)[YTDLPViewModel::class.java]
+        downloadCardViewModel = ViewModelProvider(requireActivity())[DownloadCardViewModel::class.java]
         downloadManager = requireContext().getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         sharedPreferences = PreferenceManager.getDefaultSharedPreferences(requireContext())
     }
@@ -240,33 +245,36 @@ class ResultCardDetailsDialog : BottomSheetDialogFragment(), GenericDownloadAdap
             true
         }
 
+        downloadThumb.isVisible = item.thumb.isNotBlank()
         downloadThumb.setOnClickListener {
-            downloadManager.enqueue(
-                DownloadManager.Request(item.thumb.toUri())
-                    .setAllowedNetworkTypes(
-                        DownloadManager.Request.NETWORK_WIFI or
-                                DownloadManager.Request.NETWORK_MOBILE
-                    )
-                    .setAllowedOverRoaming(true)
-                    .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                    .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "YTDLnis/" + item.title + ".jpg"))
+            UiUtil.openLinkIntent(requireContext(), item.thumb)
         }
 
         title.text = item.title
         bottomInfo.text = item.author
 
         downloadMusic.setOnClickListener {
-            onButtonClick(DownloadViewModel.Type.audio)
+            onButtonClick(DownloadType.audio)
+        }
+        downloadMusic.setOnLongClickListener {
+            onButtonClick(DownloadType.audio)
+            true
         }
 
         downloadVideo.setOnClickListener {
-            onButtonClick(DownloadViewModel.Type.video)
+            onButtonClick(DownloadType.video)
+        }
+        downloadVideo.setOnLongClickListener {
+            onButtonClick(DownloadType.video)
+            true
         }
 
 
         videoView = view.findViewById(R.id.video_view)
         val player = VideoPlayerUtil.buildPlayer(requireContext())
         videoView.player = player
+
+        val loading = view.findViewById<ProgressBar>(R.id.loading)
 
         lifecycleScope.launch {
             try {
@@ -279,6 +287,7 @@ class ResultCardDetailsDialog : BottomSheetDialogFragment(), GenericDownloadAdap
                 }
 
                 if (data.first.isEmpty()) throw Exception("No Data found!")
+                loading.isVisible = false
 
                 val urls = data.first
                 if (urls.size == 2){
@@ -296,15 +305,33 @@ class ResultCardDetailsDialog : BottomSheetDialogFragment(), GenericDownloadAdap
                 player.prepare()
                 player.play()
             }catch (e: Exception){
+                loading.isVisible = false
                 e.printStackTrace()
+            }
+        }
+
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                WorkerEventBus.events.collectLatest { event ->
+                    val progressBar = requireView().findViewWithTag<LinearProgressIndicator>("${event.downloadItemID}##progress")
+                    val outputText = requireView().findViewWithTag<TextView>("${event.downloadItemID}##output")
+
+                    requireActivity().runOnUiThread {
+                        try {
+                            progressBar?.setProgressCompat(event.progress, true)
+                            outputText?.text = event.output
+                        }catch (ignored: Exception) {}
+                    }
+                }
             }
         }
     }
 
-    private fun onButtonClick(type: DownloadViewModel.Type){
+    private fun onButtonClick(type: DownloadType){
         if (sharedPreferences.getBoolean("download_card", true)) {
             val bundle = Bundle()
-            bundle.putParcelable("result", item)
+            downloadCardViewModel.setResultItem(item)
+            downloadCardViewModel.setDownloadItem(null)
             bundle.putSerializable("type", type)
             findNavController().navigateUp()
             findNavController().navigate(R.id.downloadBottomSheetDialog, bundle)
@@ -443,6 +470,8 @@ class ResultCardDetailsDialog : BottomSheetDialogFragment(), GenericDownloadAdap
                 item,
                 requireActivity(),
                 DownloadRepository.Status.valueOf(item.status),
+                ytdlpViewModel,
+                sharedPreferences,
                 removeItem = { it: DownloadItem, sheet: BottomSheetDialog ->
                     sheet.hide()
                     removeQueuedItem(itemID)
@@ -453,9 +482,10 @@ class ResultCardDetailsDialog : BottomSheetDialogFragment(), GenericDownloadAdap
                     }
                 },
                 longClickDownloadButton = {
+                    downloadCardViewModel.setResultItem(downloadViewModel.createResultItemFromDownload(it))
+                    downloadCardViewModel.setDownloadItem(it)
+
                     findNavController().navigate(R.id.downloadBottomSheetDialog, bundleOf(
-                        Pair("downloadItem", it),
-                        Pair("result", downloadViewModel.createResultItemFromDownload(it)),
                         Pair("type", it.type)
                     )
                     )
@@ -469,73 +499,29 @@ class ResultCardDetailsDialog : BottomSheetDialogFragment(), GenericDownloadAdap
 
     override fun onCancelClick(itemID: Long) {
         lifecycleScope.launch {
-            YoutubeDL.getInstance().destroyProcessById(itemID.toString())
-            notificationUtil.cancelDownloadNotification(itemID.toInt())
-
-            val item = withContext(Dispatchers.IO){
-                downloadViewModel.getItemByID(itemID)
-            }
-            item.status = DownloadRepository.Status.Cancelled.toString()
             withContext(Dispatchers.IO){
-                downloadViewModel.updateDownload(item)
-            }
-
-            val activeCount = withContext(Dispatchers.IO){
-                downloadViewModel.getActiveDownloadsCount()
-            }
-
-            if (activeCount == 0){
-                val queuedCount = withContext(Dispatchers.IO){
-                    downloadViewModel.getQueuedDownloadsCount()
-                }
-                if (queuedCount == 0) {
-                    sharedPreferences.edit().putBoolean("paused_downloads", false).apply()
-                }
-            }
-
-            if (activeCount == 1){
-                val queue = withContext(Dispatchers.IO){
-                    downloadViewModel.getQueued()
-                }
-
-                if (!sharedPreferences.getBoolean("paused_downloads", false)){
-                    runBlocking {
-                        downloadViewModel.queueDownloads(queue)
-                    }
-                }
+                downloadViewModel.cancelDownload(itemID)
             }
         }
     }
+
+    override fun onPauseClick(itemID: Long, position: Int) {
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO){
+                downloadViewModel.pauseDownload(itemID)
+            }
+            activeAdapter.notifyItemChanged(position)
+        }
+    }
+
+    override fun onResumeClick(itemID: Long, position: Int) {
+        downloadViewModel.resumeDownload(itemID)
+    }
+
     override fun onCardClick() {
         this.dismiss()
         findNavController().navigate(
             R.id.downloadQueueMainFragment
         )
     }
-
-    //dont remove
-    @Subscribe(threadMode = ThreadMode.MAIN)
-    fun onDownloadProgressEvent(event: DownloadWorker.WorkerProgress) {
-        val progressBar = requireView().findViewWithTag<LinearProgressIndicator>("${event.downloadItemID}##progress")
-        val outputText = requireView().findViewWithTag<TextView>("${event.downloadItemID}##output")
-
-        requireActivity().runOnUiThread {
-            try {
-                progressBar?.setProgressCompat(event.progress, true)
-                outputText?.text = event.output
-            }catch (ignored: Exception) {}
-        }
-    }
-
-
-    override fun onStart() {
-        super.onStart()
-        EventBus.getDefault().register(this)
-    }
-
-    override fun onStop() {
-        super.onStop()
-        EventBus.getDefault().unregister(this)
-    }
-
 }
